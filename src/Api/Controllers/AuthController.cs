@@ -21,7 +21,58 @@ public class AuthController : ControllerBase
         _jwtTokenGenerator = jwtTokenGenerator;
     }
 
+    public record RegisterRequest(string Name, string Email, string Phone, string Password, string CountryName);
     public record LoginRequest(string Email, string Password);
+
+    [HttpPost("register")]
+    public async Task<IActionResult> Register([FromBody] RegisterRequest request, CancellationToken cancellationToken)
+    {
+        if (await _context.Users.AnyAsync(u => u.Email == request.Email, cancellationToken))
+        {
+            return BadRequest(new { message = "Email is already registered." });
+        }
+
+        // Find country by name, or create it automatically if it doesn't exist
+        var country = await _context.Countries
+            .FirstOrDefaultAsync(c => c.Name.ToLower() == request.CountryName.ToLower(), cancellationToken);
+
+        if (country == null)
+        {
+            country = new Country
+            {
+                Id = Guid.NewGuid(),
+                Name = request.CountryName,
+                Currency = "USD", // Default fallback currency
+                DefaultLanguage = "en"
+            };
+            _context.Countries.Add(country);
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+
+        var user = new User
+        {
+            Name = request.Name,
+            Email = request.Email,
+            Phone = request.Phone,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+            Role = UserRole.Customer,
+            CountryId = country.Id
+        };
+
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        var accessToken = _jwtTokenGenerator.GenerateAccessToken(user);
+        var refreshToken = _jwtTokenGenerator.GenerateRefreshToken();
+
+        return Ok(new
+        {
+            message = "Registration successful.",
+            accessToken,
+            refreshToken,
+            user = new { user.Id, user.Name, user.Email, Role = user.Role.ToString(), Country = country.Name }
+        });
+    }
 
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken cancellationToken)
@@ -62,5 +113,12 @@ public class AuthController : ControllerBase
         var role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
 
         return Ok(new { userId, email, role });
+    }
+
+    [HttpGet("admin-dashboard")]
+    [Authorize(Roles = "Admin")]
+    public IActionResult AdminOnlyDashboard()
+    {
+        return Ok(new { message = "Welcome to the Admin restricted dashboard!" });
     }
 }
