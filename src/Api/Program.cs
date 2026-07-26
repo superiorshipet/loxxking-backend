@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using System.Threading.RateLimiting;
 using Serilog;
+using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -20,9 +21,14 @@ builder.Services.AddStackExchangeRedisCache(options => {
 });
 
 builder.Services.AddControllers();
-
-// Native .NET 10 OpenAPI Support
-builder.Services.AddOpenApi();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "Loxx King API",
+    });
+});
 
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
 
@@ -55,7 +61,12 @@ app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi(); // Generates OpenAPI JSON at /openapi/v1.json
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Loxx King API V1");
+        c.RoutePrefix = string.Empty; // Serves Swagger UI directly at root (http://localhost:5196/)
+    });
 }
 
 app.UseResponseCompression();
