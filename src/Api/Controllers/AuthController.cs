@@ -1,7 +1,7 @@
+using Api.DTOs.Auth;
 using Application.Common.Interfaces;
 using Domain.Entities;
 using Domain.Enums;
-using Google.Apis.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -13,24 +13,19 @@ namespace Api.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IJwtTokenGenerator _jwtTokenGenerator;
+    private readonly IJwtTokenGenerator _jwtGenerator;
 
-    public AuthController(IUnitOfWork unitOfWork, IJwtTokenGenerator jwtTokenGenerator)
+    public AuthController(IUnitOfWork unitOfWork, IJwtTokenGenerator jwtGenerator)
     {
         _unitOfWork = unitOfWork;
-        _jwtTokenGenerator = jwtTokenGenerator;
+        _jwtGenerator = jwtGenerator;
     }
-
-    public record RegisterRequest(string Name, string Email, string Phone, string Password, string CountryName);
-    public record LoginRequest(string Email, string Password);
-    public record RefreshRequest(string RefreshToken);
-    public record GoogleLoginRequest(string IdToken);
 
     [HttpGet("countries")]
     public async Task<IActionResult> GetCountries(CancellationToken cancellationToken)
     {
         var countries = await _unitOfWork.Countries.Query()
-            .Select(c => c.Name)
+            .Select(c => new { c.Id, c.Name })
             .ToListAsync(cancellationToken);
 
         return Ok(countries);
@@ -39,33 +34,69 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request, CancellationToken cancellationToken)
     {
-        var emailExists = await _unitOfWork.Users.Query().AnyAsync(u => u.Email == request.Email, cancellationToken);
-        if (emailExists)
-            return Conflict(new { message = "Email already registered." });
+        // Validate email uniqueness
+        var existingEmail = await _unitOfWork.Users.Query()
+            .AnyAsync(u => u.Email.ToLower() == request.Email.ToLower(), cancellationToken);
+        
+        if (existingEmail)
+            return BadRequest(new { message = "Email already registered." });
 
+        // Validate phone uniqueness
+        var existingPhone = await _unitOfWork.Users.Query()
+            .AnyAsync(u => u.Phone == request.Phone, cancellationToken);
+        
+        if (existingPhone)
+            return BadRequest(new { message = "Phone number already registered." });
+
+        // Get country
         var country = await _unitOfWork.Countries.Query()
             .FirstOrDefaultAsync(c => c.Name.ToLower() == request.CountryName.ToLower(), cancellationToken);
 
         if (country is null)
-            return BadRequest(new { message = "Invalid country name. See GET /api/auth/countries for valid names." });
+            return BadRequest(new { message = $"Country '{request.CountryName}' not found." });
 
+        // Hash password
+        var hashedPassword = BCrypt.Net.BCrypt.HashPassword(request.Password);
+
+        // Create user
         var user = new User
         {
             Id = Guid.NewGuid(),
             Name = request.Name,
             Email = request.Email,
             Phone = request.Phone,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
-            Role = UserRole.Customer,
+            PasswordHash = hashedPassword,
             CountryId = country.Id,
+            Role = UserRole.Customer,
+            IsActive = true,
             CreatedAt = DateTime.UtcNow
         };
 
         await _unitOfWork.Users.AddAsync(user, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        user.Country = country;
-        return await IssueTokensAsync(user, cancellationToken);
+        // Generate tokens
+        var accessToken = _jwtGenerator.GenerateAccessToken(user);
+        var refreshToken = _jwtGenerator.GenerateRefreshToken();
+
+        var response = new LoginResponse
+        {
+            AccessToken = accessToken,
+            RefreshToken = refreshToken,
+            ExpiresAt = DateTime.UtcNow.AddHours(1), // Default 1 hour expiry
+            User = new UserDto
+            {
+                Id = user.Id,
+                Name = user.Name,
+                Email = user.Email,
+                Phone = user.Phone,
+                Role = user.Role.ToString(),
+                Country = country.Name,
+                CreatedAt = user.CreatedAt
+            }
+        };
+
+        return Ok(response);
     }
 
     [HttpPost("login")]
@@ -73,118 +104,38 @@ public class AuthController : ControllerBase
     {
         var user = await _unitOfWork.Users.Query()
             .Include(u => u.Country)
-            .FirstOrDefaultAsync(u => u.Email == request.Email, cancellationToken);
+            .FirstOrDefaultAsync(u => u.Email.ToLower() == request.Email.ToLower(), cancellationToken);
 
-        if (user is null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+        if (user is null)
             return Unauthorized(new { message = "Invalid email or password." });
 
-        return await IssueTokensAsync(user, cancellationToken);
-    }
+        if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+            return Unauthorized(new { message = "Invalid email or password." });
 
-    [HttpPost("google-login")]
-    public async Task<IActionResult> GoogleLogin([FromBody] GoogleLoginRequest request, CancellationToken cancellationToken)
-    {
-        GoogleJsonWebSignature.Payload payload;
-        try
+        if (!user.IsActive)
+            return Unauthorized(new { message = "Account is deactivated. Please contact support." });
+
+        // Generate tokens
+        var accessToken = _jwtGenerator.GenerateAccessToken(user);
+        var refreshToken = _jwtGenerator.GenerateRefreshToken();
+
+        var response = new LoginResponse
         {
-            payload = await GoogleJsonWebSignature.ValidateAsync(request.IdToken);
-        }
-        catch (Exception)
-        {
-            return BadRequest(new { message = "Invalid Google token." });
-        }
-
-        var user = await _unitOfWork.Users.Query()
-            .Include(u => u.Country)
-            .FirstOrDefaultAsync(u => u.Email == payload.Email, cancellationToken);
-
-        if (user is null)
-        {
-            var defaultCountry = await _unitOfWork.Countries.Query().FirstOrDefaultAsync(cancellationToken);
-            if (defaultCountry is null)
-                return StatusCode(500, new { message = "No default country configured in the system." });
-
-            user = new User
+            AccessToken = accessToken,
+            RefreshToken = refreshToken,
+            ExpiresAt = DateTime.UtcNow.AddHours(1), // Default 1 hour expiry
+            User = new UserDto
             {
-                Id = Guid.NewGuid(),
-                Name = payload.Name ?? "Google User",
-                Email = payload.Email,
-                Phone = string.Empty,
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword(Guid.NewGuid().ToString()),
-                Role = UserRole.Customer,
-                CountryId = defaultCountry.Id,
-                CreatedAt = DateTime.UtcNow
-            };
-
-            await _unitOfWork.Users.AddAsync(user, cancellationToken);
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-            user.Country = defaultCountry;
-        }
-
-        return await IssueTokensAsync(user, cancellationToken);
-    }
-
-    [HttpPost("refresh")]
-    public async Task<IActionResult> Refresh([FromBody] RefreshRequest request, CancellationToken cancellationToken)
-    {
-        var candidates = await _unitOfWork.Users.Query()
-            .Where(u => u.RefreshTokenHash != null && u.RefreshTokenExpiresAt > DateTime.UtcNow)
-            .ToListAsync(cancellationToken);
-
-        var user = candidates.FirstOrDefault(u =>
-            BCrypt.Net.BCrypt.Verify(request.RefreshToken, u.RefreshTokenHash));
-
-        if (user is null)
-            return Unauthorized(new { message = "Invalid or expired refresh token." });
-
-        user = await _unitOfWork.Users.Query()
-            .Include(u => u.Country)
-            .FirstAsync(u => u.Id == user.Id, cancellationToken);
-
-        return await IssueTokensAsync(user, cancellationToken);
-    }
-    [Authorize]
-    [HttpPost("logout")]
-    public async Task<IActionResult> Logout(CancellationToken cancellationToken)
-    {
-        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("nameid")?.Value;
-        if (userId is null || !Guid.TryParse(userId, out var id))
-            return Unauthorized();
-
-        var user = await _unitOfWork.Users.GetByIdAsync(id, cancellationToken);
-        if (user is not null)
-        {
-            user.RefreshTokenHash = null;
-            user.RefreshTokenExpiresAt = null;
-            _unitOfWork.Users.Update(user);
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-        }
-
-        return NoContent();
-    }
-
-    private async Task<IActionResult> IssueTokensAsync(User user, CancellationToken cancellationToken)
-    {
-        var accessToken = _jwtTokenGenerator.GenerateAccessToken(user);
-        var refreshToken = _jwtTokenGenerator.GenerateRefreshToken();
-
-        user.RefreshTokenHash = BCrypt.Net.BCrypt.HashPassword(refreshToken);
-        user.RefreshTokenExpiresAt = DateTime.UtcNow.AddDays(7);
-        _unitOfWork.Users.Update(user);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        return Ok(new
-        {
-            accessToken,
-            refreshToken,
-            user = new
-            {
-                user.Id,
-                user.Name,
-                user.Email,
+                Id = user.Id,
+                Name = user.Name,
+                Email = user.Email,
+                Phone = user.Phone,
                 Role = user.Role.ToString(),
-                Country = user.Country?.Name
+                Country = user.Country.Name,
+                CreatedAt = user.CreatedAt
             }
-        });
+        };
+
+        return Ok(response);
     }
 }

@@ -10,6 +10,7 @@ public class User {
     public UserRole Role { get; set; }
     public string PreferredLanguage { get; set; } = "en";
     public Guid CountryId { get; set; }
+    public bool IsActive { get; set; } = true;
     public Country Country { get; set; } = default!;
     public string? RefreshTokenHash { get; set; }
     public DateTime? RefreshTokenExpiresAt { get; set; }
