@@ -1,6 +1,53 @@
-@Api_HostAddress = http://localhost:5196
+# ============================================================
+# LoxxKing API - Manual Test Requests
+# ============================================================
+# Instructions: Replace placeholders (invoice-id, etc.) with actual IDs
+# from your database before running these requests.
+# ============================================================
 
-GET {{Api_HostAddress}}/weatherforecast/
-Accept: application/json
+### 1. Test Redis Caching - Categories (should be faster on 2nd call)
+# First call - loads from database, caches in Redis
+GET http://localhost:5160/api/categories
+# Second call - should be noticeably faster (reads from Redis cache)
 
-###
+### 2. Test Redis Caching - Products (list with pagination)
+# First call - loads from database
+GET http://localhost:5160/api/products?page=1&pageSize=5
+# Second call - should be faster (Redis cache)
+
+### 3. Test Redis Caching - Active Offers
+# First call - loads from database
+GET http://localhost:5160/api/offers?activeOnly=true
+# Second call - should be faster (Redis cache, 5-min TTL)
+
+### 4. Test Redis Connection
+# Before testing caching, ensure Redis is running:
+# Run in terminal: redis-cli ping
+# Should return: PONG
+
+### 5. Test QuestPDF - Generate Invoice PDF
+# Replace {invoice-id} with a valid invoice GUID from your database
+GET http://localhost:5160/api/invoices/{invoice-id}/pdf
+# Should return a PDF file download
+
+### 6. Test SiteVisits - Create visit (public, no auth)
+POST http://localhost:5160/api/site-visits
+Content-Type: application/json
+
+{
+  "countryId": "00000000-0000-0000-0000-000000000000",
+  "page": "/home"
+}
+
+### 7. Test SiteVisits - Today count (requires auth)
+# Replace {token} with a valid JWT token (Admin/StoreManager/SalesEmployee)
+GET http://localhost:5160/api/site-visits/today-count
+Authorization: Bearer {token}
+
+### 8. Test SiteVisits - Paginated list (requires auth)
+GET http://localhost:5160/api/site-visits?page=1&pageSize=10
+Authorization: Bearer {token}
+
+### 9. Test SiteVisits - Filtered list (requires auth)
+GET http://localhost:5160/api/site-visits?countryId=00000000-0000-0000-0000-000000000000&dateFrom=2026-07-01&dateTo=2026-07-27
+Authorization: Bearer {token}
