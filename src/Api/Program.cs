@@ -22,15 +22,15 @@ builder.Host.UseSerilog();
 // QuestPDF license
 QuestPDF.Settings.License = LicenseType.Community;
 
-// Database - Read from environment variable
+// Database
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
     ?? Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection")
-    ?? throw new InvalidOperationException("Database connection string is required");
+    ?? "Host=localhost;Port=5432;Database=loxxking_db;Username=superior;Password=Superior 2004";
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-// Redis Cache - Read from environment variable
+// Redis Cache
 var redisConnection = builder.Configuration.GetConnectionString("RedisConnection") 
     ?? Environment.GetEnvironmentVariable("ConnectionStrings__RedisConnection")
     ?? "localhost:6379";
@@ -48,25 +48,14 @@ builder.Services.AddScoped<IInvoicePdfGenerator, QuestPdfInvoiceGenerator>();
 // Controllers
 builder.Services.AddControllers();
 
-// CORS - Read from environment
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-    ?? Environment.GetEnvironmentVariable("Cors__AllowedOrigins")?.Split(',')
-    ?? new[] { 
-        "http://localhost:5173", 
-        "http://localhost:3000",
-        "http://localhost:5500",
-        "https://loxxking.vercel.app",
-        "https://loxxking.netlify.app"
-    };
-
+// CORS - Allow all origins for testing
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("LoxxKingCorsPolicy", policy =>
+    options.AddPolicy("AllowAll", policy =>
     {
-        policy.WithOrigins(allowedOrigins)
-              .AllowAnyHeader()
+        policy.AllowAnyOrigin()
               .AllowAnyMethod()
-              .AllowCredentials();
+              .AllowAnyHeader();
     });
 });
 
@@ -92,7 +81,7 @@ builder.Services.AddRateLimiter(options =>
 // JWT Authentication
 var jwtSecret = builder.Configuration["Jwt:Secret"] 
     ?? Environment.GetEnvironmentVariable("Jwt__Secret")
-    ?? throw new InvalidOperationException("JWT Secret is required");
+    ?? "LOXX_KING_SUPER_SECRET_KEY_32BYTES_LONG_MINIMUM";
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -102,7 +91,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuer = true,
             ValidateAudience = true,
             ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
+            ClockSkew = TimeSpan.FromMinutes(5), // Allow 5 minutes tolerance
             ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "LoxxKingApi",
             ValidAudience = builder.Configuration["Jwt:Audience"] ?? "LoxxKingClient",
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret))
@@ -113,16 +102,13 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
-// Migration + Seed (only if in development or with ENV flag)
-if (app.Environment.IsDevelopment() || Environment.GetEnvironmentVariable("RUN_MIGRATIONS") == "true")
+// Migration + Seed
+using (var scope = app.Services.CreateScope())
 {
-    using (var scope = app.Services.CreateScope())
-    {
-        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        await dbContext.Database.MigrateAsync();
-        await DbSeeder.SeedCountriesAsync(dbContext);
-        await DbSeeder.SeedAdminAsync(dbContext);
-    }
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await dbContext.Database.MigrateAsync();
+    await DbSeeder.SeedCountriesAsync(dbContext);
+    await DbSeeder.SeedAdminAsync(dbContext);
 }
 
 // Middleware pipeline
@@ -130,7 +116,10 @@ app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
 
 app.UseResponseCompression();
 app.UseHttpsRedirection();
-app.UseCors("LoxxKingCorsPolicy");
+
+// CORS - MUST be between UseHttpsRedirection and UseAuthentication
+app.UseCors("AllowAll");
+
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();

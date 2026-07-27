@@ -33,7 +33,7 @@ public class JwtTokenGenerator : IJwtTokenGenerator
         var tokenDescriptor = new SecurityTokenDescriptor
         {
             Subject = new ClaimsIdentity(claims),
-            Expires = DateTime.UtcNow.AddMinutes(15), // Short-lived access token
+            Expires = DateTime.UtcNow.AddDays(7), // 7 days expiry
             Issuer = _configuration["Jwt:Issuer"] ?? "LoxxKingApi",
             Audience = _configuration["Jwt:Audience"] ?? "LoxxKingClient",
             SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
