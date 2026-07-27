@@ -4,8 +4,8 @@ public class SupportMessage
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid ConversationId { get; set; }
-    public Guid SenderId { get; set; }
-    public User Sender { get; set; } = null!;
+    public Guid? SenderId { get; set; }          // null = guest/anonymous
+    public User? Sender { get; set; }
     public Guid? RecipientId { get; set; } // Added
     public string Message { get; set; } = string.Empty;
     public string? AttachmentUrl { get; set; }

@@ -28,21 +28,22 @@ public class SupportChatController : ControllerBase
             .Where(sm => sm.ConversationId == conversationId)
             .Include(sm => sm.Sender)
             .OrderBy(sm => sm.CreatedAt)
-            .Select(sm => new
-            {
-                sm.Id,
-                sm.ConversationId,
-                sm.Message,
-                sm.CreatedAt,
-                sm.IsRead,
-                Sender = sm.Sender != null
-                    ? new { Id = sm.Sender.Id, Name = sm.Sender.Name, Role = sm.Sender.Role.ToString() }
-                    : new { Id = sm.SenderId, Name = "Customer", Role = "Customer" },
-                sm.RecipientId
-            })
             .ToListAsync(cancellationToken);
 
-        return Ok(messages);
+        var result = messages.Select(sm => new
+        {
+            sm.Id,
+            sm.ConversationId,
+            sm.Message,
+            sm.CreatedAt,
+            sm.IsRead,
+            Sender = sm.Sender != null
+                ? new { Id = (Guid?)sm.Sender.Id, Name = sm.Sender.Name, Role = sm.Sender.Role.ToString() }
+                : new { Id = sm.SenderId,          Name = "Customer",     Role = "Customer" },
+            sm.RecipientId
+        });
+
+        return Ok(result);
     }
 
     // ─── Send a message (guest or authenticated) ─────────────────────────────
@@ -55,8 +56,8 @@ public class SupportChatController : ControllerBase
 
         var userId = GetCurrentUserId();
 
-        // Guests have no user ID — store Guid.Empty; admin panel identifies them as "Customer"
-        var senderIdToStore = userId != Guid.Empty ? userId : Guid.Empty;
+        // null = guest/anonymous (no FK violation)
+        Guid? senderIdToStore = userId != Guid.Empty ? userId : (Guid?)null;
 
         // Treat zero/missing GUID as "start a new conversation"
         var conversationId = (request.ConversationId == Guid.Empty || request.ConversationId == default)
