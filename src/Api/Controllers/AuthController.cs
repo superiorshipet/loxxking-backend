@@ -32,68 +32,7 @@ public class AuthController : ControllerBase
         return Ok(countries);
     }
 
-    [HttpPost("register")]
-    public async Task<IActionResult> Register([FromBody] RegisterRequest request, CancellationToken cancellationToken)
-    {
-        var existingEmail = await _unitOfWork.Users.Query()
-            .AnyAsync(u => u.Email.ToLower() == request.Email.ToLower(), cancellationToken);
-        
-        if (existingEmail)
-            return BadRequest(new { message = "Email already registered." });
-
-        var existingPhone = await _unitOfWork.Users.Query()
-            .AnyAsync(u => u.Phone == request.Phone, cancellationToken);
-        
-        if (existingPhone)
-            return BadRequest(new { message = "Phone number already registered." });
-
-        var country = await _unitOfWork.Countries.Query()
-            .FirstOrDefaultAsync(c => c.Name.ToLower() == request.CountryName.ToLower(), cancellationToken);
-
-        if (country is null)
-            return BadRequest(new { message = $"Country '{request.CountryName}' not found." });
-
-        var hashedPassword = BCrypt.Net.BCrypt.HashPassword(request.Password);
-
-        var user = new User
-        {
-            Id = Guid.NewGuid(),
-            Name = request.Name,
-            Email = request.Email,
-            Phone = request.Phone,
-            PasswordHash = hashedPassword,
-            CountryId = country.Id,
-            Role = UserRole.Customer,
-            IsActive = true,
-            PreferredLanguage = "en",
-            CreatedAt = DateTime.UtcNow
-        };
-
-        await _unitOfWork.Users.AddAsync(user, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var accessToken = _jwtGenerator.GenerateAccessToken(user);
-        var refreshToken = _jwtGenerator.GenerateRefreshToken();
-
-        var response = new LoginResponse
-        {
-            AccessToken = accessToken,
-            RefreshToken = refreshToken,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(15),
-            User = new UserDto
-            {
-                Id = user.Id,
-                Name = user.Name,
-                Email = user.Email,
-                Phone = user.Phone,
-                Role = user.Role.ToString(),
-                Country = country.Name,
-                CreatedAt = user.CreatedAt
-            }
-        };
-
-        return Ok(response);
-    }
+    // REGISTER REMOVED - Staff accounts created by Admin only via UsersController
 
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken cancellationToken)
@@ -138,7 +77,6 @@ public class AuthController : ControllerBase
     [Authorize]
     public async Task<IActionResult> GetCurrentUser(CancellationToken cancellationToken)
     {
-        // Get user ID from claims - using the correct claim types
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
             ?? User.FindFirst("nameid")?.Value 
             ?? User.FindFirst("sub")?.Value;

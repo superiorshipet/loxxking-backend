@@ -1,5 +1,6 @@
 using Api.Middlewares;
 using Application.Common.Interfaces;
+using Infrastructure;
 using Infrastructure.Persistence;
 using Infrastructure.Repositories;
 using Infrastructure.Services;
@@ -98,6 +99,10 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
 builder.Services.AddScoped<IFileStorageService, CloudinaryFileStorageService>();
 builder.Services.AddScoped<IInvoicePdfGenerator, QuestPdfInvoiceGenerator>();
+builder.Services.AddScoped<IOrderNumberGenerator, OrderNumberGenerator>(); // <--- ADDED
+
+// ==================== GeoLocation Service ====================
+builder.Services.AddGeoLocationService(builder.Configuration);
 
 // ==================== Controllers ====================
 
@@ -190,7 +195,7 @@ if ((Environment.GetEnvironmentVariable("RUN_MIGRATIONS") ?? "false")
 // ==================== Middleware ====================
 
 app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
-
+app.UseMiddleware<GeoLocationMiddleware>();
 app.UseResponseCompression();
 
 app.UseHttpsRedirection();

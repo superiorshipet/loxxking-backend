@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260727102213_AddUpdatedAtToUser")]
-    partial class AddUpdatedAtToUser
+    [Migration("20260727130940_InitialCreate")]
+    partial class InitialCreate
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -217,20 +217,29 @@ namespace Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("Address")
-                        .IsRequired()
-                        .HasColumnType("text");
-
                     b.Property<Guid>("CountryId")
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<Guid>("CustomerId")
-                        .HasColumnType("uuid");
+                    b.Property<string>("GuestAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("GuestName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("GuestPhone")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("Notes")
+                        .HasColumnType("text");
+
+                    b.Property<string>("OrderNumber")
+                        .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<int>("PaymentMethod")
@@ -238,10 +247,6 @@ namespace Infrastructure.Migrations
 
                     b.Property<int>("PaymentStatus")
                         .HasColumnType("integer");
-
-                    b.Property<string>("Phone")
-                        .IsRequired()
-                        .HasColumnType("text");
 
                     b.Property<string>("ShipmentCode")
                         .HasColumnType("text");
@@ -252,13 +257,19 @@ namespace Infrastructure.Migrations
                     b.Property<decimal>("TotalAmount")
                         .HasColumnType("numeric");
 
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid");
+
                     b.HasKey("Id");
 
                     b.HasIndex("CountryId");
 
-                    b.HasIndex("CustomerId");
+                    b.HasIndex("OrderNumber")
+                        .IsUnique();
 
                     b.HasIndex("Status");
+
+                    b.HasIndex("UserId");
 
                     b.ToTable("Orders");
                 });
@@ -533,6 +544,12 @@ namespace Infrastructure.Migrations
 
                     b.HasIndex("CountryId");
 
+                    b.HasIndex("Email")
+                        .IsUnique();
+
+                    b.HasIndex("Phone")
+                        .IsUnique();
+
                     b.ToTable("Users");
                 });
 
@@ -607,15 +624,14 @@ namespace Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Domain.Entities.User", "Customer")
+                    b.HasOne("Domain.Entities.User", "User")
                         .WithMany()
-                        .HasForeignKey("CustomerId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.Navigation("Country");
 
-                    b.Navigation("Customer");
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("Domain.Entities.OrderEditLog", b =>

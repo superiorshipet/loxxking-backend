@@ -1,9 +1,12 @@
-namespace Infrastructure.Persistence;
-using Microsoft.EntityFrameworkCore;
 using Domain.Entities;
+using Microsoft.EntityFrameworkCore;
 
-public class AppDbContext : DbContext {
+namespace Infrastructure.Persistence;
+
+public class AppDbContext : DbContext
+{
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+
     public DbSet<User> Users => Set<User>();
     public DbSet<Country> Countries => Set<Country>();
     public DbSet<Category> Categories => Set<Category>();
@@ -21,21 +24,56 @@ public class AppDbContext : DbContext {
     public DbSet<Offer> Offers => Set<Offer>();
     public DbSet<BankTransfer> BankTransfers => Set<BankTransfer>();
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
         base.OnModelCreating(modelBuilder);
-        modelBuilder.Entity<Order>().HasIndex(o => o.Status);
-        modelBuilder.Entity<Order>().HasIndex(o => o.CountryId);
-        modelBuilder.Entity<Order>().HasIndex(o => o.CustomerId);
-        modelBuilder.Entity<Product>().HasIndex(p => p.CategoryId);
-        modelBuilder.Entity<ProductPrice>().HasIndex(pp => new { pp.ProductId, pp.CountryId }).IsUnique();
-        modelBuilder.Entity<Inventory>().HasIndex(i => new { i.ProductId, i.CountryId }).IsUnique();
-        modelBuilder.Entity<Review>().HasIndex(r => r.ProductId);
-        modelBuilder.Entity<Notification>().HasIndex(n => n.UserId);
-        modelBuilder.Entity<BankTransfer>().HasIndex(bt => bt.OrderId);
-        modelBuilder.Entity<Invoice>().HasIndex(i => i.OrderId).IsUnique();
 
-        // SupportMessage عندها علاقتين مع User (Sender و Recipient اختياري)
-        // لازم نوضح لـ EF Core كل علاقة تتربط بأنهي FK عشان ميحصلش تعارض تلقائي
+        // Order indexes (updated for guest checkout)
+        modelBuilder.Entity<Order>()
+            .HasIndex(o => o.OrderNumber)
+            .IsUnique();
+
+        modelBuilder.Entity<Order>()
+            .HasIndex(o => o.Status);
+
+        modelBuilder.Entity<Order>()
+            .HasIndex(o => o.CountryId);
+
+        // User indexes
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.Email)
+            .IsUnique();
+
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.Phone)
+            .IsUnique();
+
+        // Product indexes
+        modelBuilder.Entity<Product>()
+            .HasIndex(p => p.CategoryId);
+
+        modelBuilder.Entity<ProductPrice>()
+            .HasIndex(pp => new { pp.ProductId, pp.CountryId })
+            .IsUnique();
+
+        modelBuilder.Entity<Inventory>()
+            .HasIndex(i => new { i.ProductId, i.CountryId })
+            .IsUnique();
+
+        modelBuilder.Entity<Review>()
+            .HasIndex(r => r.ProductId);
+
+        modelBuilder.Entity<Notification>()
+            .HasIndex(n => n.UserId);
+
+        modelBuilder.Entity<BankTransfer>()
+            .HasIndex(bt => bt.OrderId);
+
+        modelBuilder.Entity<Invoice>()
+            .HasIndex(i => i.OrderId)
+            .IsUnique();
+
+        // SupportMessage relationships
         modelBuilder.Entity<SupportMessage>()
             .HasOne(sm => sm.Sender)
             .WithMany()
@@ -44,5 +82,17 @@ public class AppDbContext : DbContext {
 
         modelBuilder.Entity<SupportMessage>()
             .HasIndex(sm => sm.ConversationId);
+
+        // Order relationships (updated for guest checkout)
+        modelBuilder.Entity<Order>()
+            .HasOne(o => o.User)
+            .WithMany()
+            .HasForeignKey(o => o.UserId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Order>()
+            .HasOne(o => o.Country)
+            .WithMany()
+            .HasForeignKey(o => o.CountryId);
     }
 }

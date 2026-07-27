@@ -3,6 +3,7 @@ using Application.Common.Interfaces;
 using Domain.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using MockQueryable.Moq;
 using Moq;
 using System.Security.Claims;
@@ -50,8 +51,10 @@ public class InvoicesControllerTests
                 Order = new Order 
                 { 
                     Id = Guid.NewGuid(),
-                    Customer = new User { Name = "Test Customer" },
-                    Country = new Country { Name = "Egypt" }
+                    UserId = _userId,
+                    User = new User { Name = "Test Customer" },
+                    Country = new Country { Name = "Egypt" },
+                    GuestName = "Guest Customer"
                 }
             }
         }.BuildMockDbSet();
@@ -79,9 +82,10 @@ public class InvoicesControllerTests
             Order = new Order
             {
                 Id = Guid.NewGuid(),
-                CustomerId = _userId,
-                Customer = new User { Name = "Test Customer" },
-                Country = new Country { Name = "Egypt" }
+                UserId = _userId,
+                User = new User { Name = "Test Customer" },
+                Country = new Country { Name = "Egypt" },
+                GuestName = "Guest Customer"
             }
         };
 
@@ -105,7 +109,8 @@ public class InvoicesControllerTests
         {
             Id = orderId,
             TotalAmount = 100,
-            Customer = new User { Name = "Test Customer" }
+            GuestName = "Test Customer",
+            GuestPhone = "01000000000"
         };
 
         var orders = new List<Order> { order }.BuildMockDbSet();
