@@ -22,10 +22,24 @@ public class AuthController : ControllerBase
         _jwtTokenGenerator = jwtTokenGenerator;
     }
 
-    public record RegisterRequest(string Name, string Email, string Phone, string Password, Guid CountryId);
+    public record RegisterRequest(string Name, string Email, string Phone, string Password, string CountryName);
     public record LoginRequest(string Email, string Password);
     public record RefreshRequest(string RefreshToken);
     public record GoogleLoginRequest(string IdToken);
+
+    // ------------------------------------------------------------
+    // GET /api/auth/countries — لسته بسيطة بأسماء الدول بس، عشان
+    // الفرونت اند يعمل منها dropdown من غير ما يتعامل مع GUID خالص
+    // ------------------------------------------------------------
+    [HttpGet("countries")]
+    public async Task<IActionResult> GetCountries(CancellationToken cancellationToken)
+    {
+        var countries = await _dbContext.Countries
+            .Select(c => c.Name)
+            .ToListAsync(cancellationToken);
+
+        return Ok(countries);
+    }
 
     // ------------------------------------------------------------
     // POST /api/auth/register
@@ -37,9 +51,11 @@ public class AuthController : ControllerBase
         if (emailExists)
             return Conflict(new { message = "Email already registered." });
 
-        var countryExists = await _dbContext.Countries.AnyAsync(c => c.Id == request.CountryId, cancellationToken);
-        if (!countryExists)
-            return BadRequest(new { message = "Invalid country." });
+        var country = await _dbContext.Countries
+            .FirstOrDefaultAsync(c => c.Name.ToLower() == request.CountryName.ToLower(), cancellationToken);
+
+        if (country is null)
+            return BadRequest(new { message = "Invalid country name. See GET /api/auth/countries for valid names." });
 
         var user = new User
         {
@@ -49,13 +65,14 @@ public class AuthController : ControllerBase
             Phone = request.Phone,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
             Role = UserRole.Customer,
-            CountryId = request.CountryId,
+            CountryId = country.Id,
             CreatedAt = DateTime.UtcNow
         };
 
         _dbContext.Users.Add(user);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
+        user.Country = country;
         return await IssueTokensAsync(user, cancellationToken);
     }
 
@@ -127,21 +144,11 @@ public class AuthController : ControllerBase
     [HttpPost("refresh")]
     public async Task<IActionResult> Refresh([FromBody] RefreshRequest request, CancellationToken cancellationToken)
     {
-        var incomingHash = BCrypt.Net.BCrypt.HashPassword(request.RefreshToken);
-
-        var user = await _dbContext.Users
-            .Include(u => u.Country)
-            .FirstOrDefaultAsync(u =>
-                u.RefreshTokenExpiresAt != null &&
-                u.RefreshTokenExpiresAt > DateTime.UtcNow,
-                cancellationToken);
-
-        // نبحث يدويًا لأن BCrypt hash مختلف كل مرة، فمينفعش تتفلتر في الـ query
-        var allCandidates = await _dbContext.Users
+        var candidates = await _dbContext.Users
             .Where(u => u.RefreshTokenHash != null && u.RefreshTokenExpiresAt > DateTime.UtcNow)
             .ToListAsync(cancellationToken);
 
-        user = allCandidates.FirstOrDefault(u =>
+        var user = candidates.FirstOrDefault(u =>
             BCrypt.Net.BCrypt.Verify(request.RefreshToken, u.RefreshTokenHash));
 
         if (user is null)
@@ -151,35 +158,6 @@ public class AuthController : ControllerBase
 
         return await IssueTokensAsync(user, cancellationToken);
     }
-
-    // ------------------------------------------------------------
-    // GET /api/auth/me
-    // ------------------------------------------------------------
-    [Authorize]
-    [HttpGet("me")]
-    public async Task<IActionResult> Me(CancellationToken cancellationToken)
-    {
-        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("nameid")?.Value;
-        if (userId is null || !Guid.TryParse(userId, out var id))
-            return Unauthorized();
-
-        var user = await _dbContext.Users
-            .Include(u => u.Country)
-            .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
-
-        if (user is null)
-            return NotFound();
-
-        return Ok(new
-        {
-            user.Id,
-            user.Name,
-            user.Email,
-            Role = user.Role.ToString(),
-            Country = user.Country?.Name
-        });
-    }
-
     // ------------------------------------------------------------
     // POST /api/auth/logout
     // ------------------------------------------------------------
