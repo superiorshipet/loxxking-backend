@@ -47,8 +47,6 @@ builder.Services.AddScoped<IInvoicePdfGenerator, QuestPdfInvoiceGenerator>();
 
 // Controllers
 builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
 
 // CORS - Read from environment
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
@@ -56,6 +54,7 @@ var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get
     ?? new[] { 
         "http://localhost:5173", 
         "http://localhost:3000",
+        "http://localhost:5500",
         "https://loxxking.vercel.app",
         "https://loxxking.netlify.app"
     };
@@ -128,16 +127,6 @@ if (app.Environment.IsDevelopment() || Environment.GetEnvironmentVariable("RUN_M
 
 // Middleware pipeline
 app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
-
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Loxx King API V1");
-        c.RoutePrefix = string.Empty;
-    });
-}
 
 app.UseResponseCompression();
 app.UseHttpsRedirection();
