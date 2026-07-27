@@ -23,12 +23,13 @@ public class AppDbContext : DbContext
     public DbSet<SiteVisit> SiteVisits => Set<SiteVisit>();
     public DbSet<Offer> Offers => Set<Offer>();
     public DbSet<BankTransfer> BankTransfers => Set<BankTransfer>();
+    public DbSet<SupportConversation> SupportConversations => Set<SupportConversation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
 
-        // Order indexes (updated for guest checkout)
+        // Order indexes
         modelBuilder.Entity<Order>()
             .HasIndex(o => o.OrderNumber)
             .IsUnique();
@@ -73,17 +74,11 @@ public class AppDbContext : DbContext
             .HasIndex(i => i.OrderId)
             .IsUnique();
 
-        // SupportMessage relationships
-        modelBuilder.Entity<SupportMessage>()
-            .HasOne(sm => sm.Sender)
-            .WithMany()
-            .HasForeignKey(sm => sm.SenderId)
-            .OnDelete(DeleteBehavior.Restrict);
-
+        // SupportMessage indexes
         modelBuilder.Entity<SupportMessage>()
             .HasIndex(sm => sm.ConversationId);
 
-        // Order relationships (updated for guest checkout)
+        // Order relationships
         modelBuilder.Entity<Order>()
             .HasOne(o => o.User)
             .WithMany()
@@ -94,5 +89,16 @@ public class AppDbContext : DbContext
             .HasOne(o => o.Country)
             .WithMany()
             .HasForeignKey(o => o.CountryId);
+
+        // SupportConversation relationships
+        modelBuilder.Entity<SupportConversation>()
+            .HasMany(sc => sc.Messages)
+            .WithOne()
+            .HasForeignKey(sm => sm.ConversationId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<SupportConversation>()
+            .HasIndex(sc => sc.OrderNumber)
+            .IsUnique();
     }
 }
