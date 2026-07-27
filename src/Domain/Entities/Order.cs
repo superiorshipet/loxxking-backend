@@ -1,5 +1,6 @@
 namespace Domain.Entities;
 using Domain.Enums;
+
 public class Order {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid CustomerId { get; set; }

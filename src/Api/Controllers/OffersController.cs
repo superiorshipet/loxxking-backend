@@ -1,6 +1,5 @@
 using Application.Common.Interfaces;
 using Domain.Entities;
-using Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -9,7 +8,6 @@ namespace Api.Controllers;
 
 [ApiController]
 [Route("api/offers")]
-[Authorize]
 public class OffersController : ControllerBase
 {
     private readonly IUnitOfWork _unitOfWork;
@@ -19,30 +17,30 @@ public class OffersController : ControllerBase
         _unitOfWork = unitOfWork;
     }
 
+    public record CreateOfferRequest(Guid ProductId, decimal DiscountPercent, DateTime StartDate, DateTime EndDate);
+    public record UpdateOfferRequest(decimal DiscountPercent, DateTime StartDate, DateTime EndDate);
+
     [HttpGet]
-    public async Task<IActionResult> GetAll(CancellationToken cancellationToken)
+    public async Task<IActionResult> GetAll([FromQuery] bool activeOnly = false, CancellationToken cancellationToken = default)
     {
-        var offers = await _unitOfWork.Offers.Query()
-            .Include(o => o.OfferProducts)
-                .ThenInclude(op => op.Product)
-            .Where(o => o.IsActive && o.StartDate <= DateTime.UtcNow && o.EndDate >= DateTime.UtcNow)
+        var query = _unitOfWork.Offers.Query().Include(o => o.Product).AsQueryable();
+
+        if (activeOnly)
+        {
+            var now = DateTime.UtcNow;
+            query = query.Where(o => o.StartDate <= now && o.EndDate >= now);
+        }
+
+        var offers = await query
+            .OrderByDescending(o => o.StartDate)
             .Select(o => new
             {
                 o.Id,
-                Title = o.TitleEn,
-                TitleAr = o.TitleAr,
-                o.Description,
-                o.DiscountPercentage,
+                ProductId = o.ProductId,
+                ProductName = o.Product.NameEn,
+                o.DiscountPercent,
                 o.StartDate,
-                o.EndDate,
-                o.IsActive,
-                Products = o.OfferProducts.Select(op => new
-                {
-                    op.ProductId,
-                    ProductName = op.Product.NameEn,
-                    ProductPrice = op.Product.BasePrice,
-                    op.DiscountPercentage
-                })
+                o.EndDate
             })
             .ToListAsync(cancellationToken);
 
@@ -53,8 +51,7 @@ public class OffersController : ControllerBase
     public async Task<IActionResult> GetById(Guid id, CancellationToken cancellationToken)
     {
         var offer = await _unitOfWork.Offers.Query()
-            .Include(o => o.OfferProducts)
-                .ThenInclude(op => op.Product)
+            .Include(o => o.Product)
             .FirstOrDefaultAsync(o => o.Id == id, cancellationToken);
 
         if (offer is null)
@@ -63,20 +60,11 @@ public class OffersController : ControllerBase
         return Ok(new
         {
             offer.Id,
-            Title = offer.TitleEn,
-            TitleAr = offer.TitleAr,
-            offer.Description,
-            offer.DiscountPercentage,
+            ProductId = offer.ProductId,
+            ProductName = offer.Product.NameEn,
+            offer.DiscountPercent,
             offer.StartDate,
-            offer.EndDate,
-            offer.IsActive,
-            Products = offer.OfferProducts.Select(op => new
-            {
-                op.ProductId,
-                ProductName = op.Product.NameEn,
-                ProductPrice = op.Product.BasePrice,
-                op.DiscountPercentage
-            })
+            offer.EndDate
         });
     }
 
@@ -84,115 +72,59 @@ public class OffersController : ControllerBase
     [Authorize(Roles = "Admin,StoreManager")]
     public async Task<IActionResult> Create([FromBody] CreateOfferRequest request, CancellationToken cancellationToken)
     {
+        if (request.EndDate <= request.StartDate)
+            return BadRequest(new { message = "EndDate must be after StartDate." });
+
+        var productExists = await _unitOfWork.Products.Query().AnyAsync(p => p.Id == request.ProductId, cancellationToken);
+        if (!productExists)
+            return BadRequest(new { message = "Invalid product." });
+
         var offer = new Offer
         {
             Id = Guid.NewGuid(),
-            TitleAr = request.TitleAr,
-            TitleEn = request.TitleEn,
-            Description = request.Description,
-            DiscountPercentage = request.DiscountPercentage,
+            ProductId = request.ProductId,
+            DiscountPercent = request.DiscountPercent,
             StartDate = request.StartDate,
-            EndDate = request.EndDate,
-            IsActive = true,
-            CreatedAt = DateTime.UtcNow
+            EndDate = request.EndDate
         };
 
         await _unitOfWork.Offers.AddAsync(offer, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Add products to offer using the OfferProducts repository
-        foreach (var productId in request.ProductIds)
-        {
-            var offerProduct = new OfferProduct
-            {
-                Id = Guid.NewGuid(),
-                OfferId = offer.Id,
-                ProductId = productId,
-                Quantity = 1,
-                DiscountPercentage = request.DiscountPercentage,
-                CreatedAt = DateTime.UtcNow
-            };
-            await _unitOfWork.OfferProducts.AddAsync(offerProduct, cancellationToken);
-        }
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        return CreatedAtAction(nameof(GetById), new { id = offer.Id }, offer);
+        return CreatedAtAction(nameof(GetById), new { id = offer.Id }, new { offer.Id });
     }
 
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin,StoreManager")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateOfferRequest request, CancellationToken cancellationToken)
     {
-        var offer = await _unitOfWork.Offers.Query()
-            .Include(o => o.OfferProducts)
-            .FirstOrDefaultAsync(o => o.Id == id, cancellationToken);
+        if (request.EndDate <= request.StartDate)
+            return BadRequest(new { message = "EndDate must be after StartDate." });
 
+        var offer = await _unitOfWork.Offers.GetByIdAsync(id, cancellationToken);
         if (offer is null)
             return NotFound();
 
-        if (!string.IsNullOrEmpty(request.TitleAr))
-            offer.TitleAr = request.TitleAr;
-        if (!string.IsNullOrEmpty(request.TitleEn))
-            offer.TitleEn = request.TitleEn;
-        if (!string.IsNullOrEmpty(request.Description))
-            offer.Description = request.Description;
-        if (request.DiscountPercentage.HasValue)
-            offer.DiscountPercentage = request.DiscountPercentage.Value;
-        if (request.StartDate.HasValue)
-            offer.StartDate = request.StartDate.Value;
-        if (request.EndDate.HasValue)
-            offer.EndDate = request.EndDate.Value;
-        if (request.IsActive.HasValue)
-            offer.IsActive = request.IsActive.Value;
+        offer.DiscountPercent = request.DiscountPercent;
+        offer.StartDate = request.StartDate;
+        offer.EndDate = request.EndDate;
 
         _unitOfWork.Offers.Update(offer);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return Ok(offer);
+        return Ok(new { offer.Id });
     }
 
     [HttpDelete("{id}")]
     [Authorize(Roles = "Admin,StoreManager")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
-        var offer = await _unitOfWork.Offers.Query()
-            .Include(o => o.OfferProducts)
-            .FirstOrDefaultAsync(o => o.Id == id, cancellationToken);
-
+        var offer = await _unitOfWork.Offers.GetByIdAsync(id, cancellationToken);
         if (offer is null)
             return NotFound();
 
-        // Remove associated offer products
-        foreach (var offerProduct in offer.OfferProducts.ToList())
-        {
-            _unitOfWork.OfferProducts.Remove(offerProduct);
-        }
-
         _unitOfWork.Offers.Remove(offer);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
-
         return NoContent();
-    }
-
-    public class CreateOfferRequest
-    {
-        public string TitleAr { get; set; } = string.Empty;
-        public string TitleEn { get; set; } = string.Empty;
-        public string Description { get; set; } = string.Empty;
-        public decimal DiscountPercentage { get; set; }
-        public DateTime StartDate { get; set; }
-        public DateTime EndDate { get; set; }
-        public List<Guid> ProductIds { get; set; } = new();
-    }
-
-    public class UpdateOfferRequest
-    {
-        public string? TitleAr { get; set; }
-        public string? TitleEn { get; set; }
-        public string? Description { get; set; }
-        public decimal? DiscountPercentage { get; set; }
-        public DateTime? StartDate { get; set; }
-        public DateTime? EndDate { get; set; }
-        public bool? IsActive { get; set; }
     }
 }

@@ -1,18 +1,13 @@
+namespace Domain.Entities;
 using Domain.Enums;
 
-namespace Domain.Entities;
-
-public class BankTransfer
-{
+public class BankTransfer {
     public Guid Id { get; set; } = Guid.NewGuid();
-
     public Guid OrderId { get; set; }
-    public Order Order { get; set; } = null!;
-
-    public string ProofImageUrl { get; set; } = string.Empty;
-    public BankTransferStatus Status { get; set; }
-
-    public DateTime SubmittedAt { get; set; }
+    public Order Order { get; set; } = default!;
+    public string ProofImageUrl { get; set; } = default!;
+    public BankTransferStatus Status { get; set; } = BankTransferStatus.PendingReview;
+    public DateTime SubmittedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ReviewedAt { get; set; }
     public string? RejectionReason { get; set; }
 }
