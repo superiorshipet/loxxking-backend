@@ -53,7 +53,7 @@ public class QuestPdfInvoiceGenerator : IInvoicePdfGenerator
                             }
                         });
 
-                        col.Item().PaddingTop(1, Unit.Centimetre).LineHorizontal();
+                        col.Item().PaddingTop(1, Unit.Centimetre).LineHorizontal(1);
 
                         col.Item().Table(table =>
                         {
@@ -77,10 +77,13 @@ public class QuestPdfInvoiceGenerator : IInvoicePdfGenerator
                             {
                                 foreach (var item in invoice.Order.OrderItems)
                                 {
+                                    // Calculate unit price from total and quantity
+                                    var unitPrice = item.Quantity > 0 ? item.TotalPrice / item.Quantity : 0;
+                                    
                                     table.Cell().Padding(5).Text(item.Product?.NameEn ?? "Product");
                                     table.Cell().Padding(5).Text(item.Quantity.ToString()).AlignRight();
-                                    table.Cell().Padding(5).Text($"{item.UnitPrice:C}").AlignRight();
-                                    table.Cell().Padding(5).Text($"{(item.Quantity * item.UnitPrice):C}").AlignRight();
+                                    table.Cell().Padding(5).Text($"{unitPrice:C}").AlignRight();
+                                    table.Cell().Padding(5).Text($"{item.TotalPrice:C}").AlignRight();
                                 }
                             }
                             else

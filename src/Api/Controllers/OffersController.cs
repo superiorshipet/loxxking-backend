@@ -3,6 +3,8 @@ using Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
+using System.Text.Json;
 
 namespace Api.Controllers;
 
@@ -11,18 +13,35 @@ namespace Api.Controllers;
 public class OffersController : ControllerBase
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IDistributedCache _cache;
+    private const string ActiveOffersCacheKey = "offers:active";
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
 
-    public OffersController(IUnitOfWork unitOfWork)
+    public OffersController(IUnitOfWork unitOfWork, IDistributedCache cache)
     {
         _unitOfWork = unitOfWork;
+        _cache = cache;
     }
 
     public record CreateOfferRequest(Guid ProductId, decimal DiscountPercent, DateTime StartDate, DateTime EndDate);
     public record UpdateOfferRequest(decimal DiscountPercent, DateTime StartDate, DateTime EndDate);
+    public record OfferDto(Guid Id, Guid ProductId, string ProductName, decimal DiscountPercent, DateTime StartDate, DateTime EndDate);
 
     [HttpGet]
     public async Task<IActionResult> GetAll([FromQuery] bool activeOnly = false, CancellationToken cancellationToken = default)
     {
+        // Only cache when activeOnly=true
+        if (activeOnly)
+        {
+            // Try to get from cache
+            var cached = await _cache.GetStringAsync(ActiveOffersCacheKey, cancellationToken);
+            if (cached is not null)
+            {
+                var offers = JsonSerializer.Deserialize<List<OfferDto>>(cached);
+                return Ok(offers);
+            }
+        }
+
         var query = _unitOfWork.Offers.Query().Include(o => o.Product).AsQueryable();
 
         if (activeOnly)
@@ -33,16 +52,22 @@ public class OffersController : ControllerBase
 
         var offers = await query
             .OrderByDescending(o => o.StartDate)
-            .Select(o => new
-            {
+            .Select(o => new OfferDto(
                 o.Id,
-                ProductId = o.ProductId,
-                ProductName = o.Product.NameEn,
+                o.ProductId,
+                o.Product.NameEn,
                 o.DiscountPercent,
                 o.StartDate,
                 o.EndDate
-            })
+            ))
             .ToListAsync(cancellationToken);
+
+        // Cache if activeOnly=true
+        if (activeOnly)
+        {
+            var options = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl };
+            await _cache.SetStringAsync(ActiveOffersCacheKey, JsonSerializer.Serialize(offers), options, cancellationToken);
+        }
 
         return Ok(offers);
     }
@@ -91,6 +116,9 @@ public class OffersController : ControllerBase
         await _unitOfWork.Offers.AddAsync(offer, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
+        // Invalidate active offers cache
+        await _cache.RemoveAsync(ActiveOffersCacheKey, cancellationToken);
+
         return CreatedAtAction(nameof(GetById), new { id = offer.Id }, new { offer.Id });
     }
 
@@ -112,6 +140,9 @@ public class OffersController : ControllerBase
         _unitOfWork.Offers.Update(offer);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
+        // Invalidate active offers cache
+        await _cache.RemoveAsync(ActiveOffersCacheKey, cancellationToken);
+
         return Ok(new { offer.Id });
     }
 
@@ -125,6 +156,10 @@ public class OffersController : ControllerBase
 
         _unitOfWork.Offers.Remove(offer);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Invalidate active offers cache
+        await _cache.RemoveAsync(ActiveOffersCacheKey, cancellationToken);
+
         return NoContent();
     }
 }

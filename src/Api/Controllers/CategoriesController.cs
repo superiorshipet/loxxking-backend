@@ -3,6 +3,8 @@ using Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
+using System.Text.Json;
 
 namespace Api.Controllers;
 
@@ -11,20 +13,41 @@ namespace Api.Controllers;
 public class CategoriesController : ControllerBase
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IDistributedCache _cache;
+    private const string CacheKey = "categories:all";
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(15);
 
-    public CategoriesController(IUnitOfWork unitOfWork)
+    public CategoriesController(IUnitOfWork unitOfWork, IDistributedCache cache)
     {
         _unitOfWork = unitOfWork;
+        _cache = cache;
     }
 
     public record CategoryRequest(string NameAr, string NameEn);
+    public record CategoryDto(Guid Id, string NameAr, string NameEn);
 
     [HttpGet]
     public async Task<IActionResult> GetAll(CancellationToken cancellationToken)
     {
+        // Try to get from cache
+        var cached = await _cache.GetStringAsync(CacheKey, cancellationToken);
+        if (cached is not null)
+        {
+            var categories = JsonSerializer.Deserialize<List<CategoryDto>>(cached);
+            return Ok(categories);
+        }
+
+        // Query from database
         var categories = await _unitOfWork.Categories.Query()
-            .Select(c => new { c.Id, c.NameAr, c.NameEn })
+            .Select(c => new CategoryDto(c.Id, c.NameAr, c.NameEn))
             .ToListAsync(cancellationToken);
+
+        // Store in cache
+        var options = new DistributedCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = CacheTtl
+        };
+        await _cache.SetStringAsync(CacheKey, JsonSerializer.Serialize(categories), options, cancellationToken);
 
         return Ok(categories);
     }
@@ -43,6 +66,9 @@ public class CategoriesController : ControllerBase
         await _unitOfWork.Categories.AddAsync(category, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
+        // Invalidate cache
+        await _cache.RemoveAsync(CacheKey, cancellationToken);
+
         return Ok(new { category.Id });
     }
 
@@ -59,6 +85,9 @@ public class CategoriesController : ControllerBase
         _unitOfWork.Categories.Update(category);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
+        // Invalidate cache
+        await _cache.RemoveAsync(CacheKey, cancellationToken);
+
         return Ok(new { category.Id });
     }
 
@@ -72,6 +101,10 @@ public class CategoriesController : ControllerBase
 
         _unitOfWork.Categories.Remove(category);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Invalidate cache
+        await _cache.RemoveAsync(CacheKey, cancellationToken);
+
         return NoContent();
     }
 }

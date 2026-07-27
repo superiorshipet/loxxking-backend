@@ -3,6 +3,8 @@ using Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
+using System.Text.Json;
 
 namespace Api.Controllers;
 
@@ -11,16 +13,42 @@ namespace Api.Controllers;
 public class ProductsController : ControllerBase
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IDistributedCache _cache;
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
+    private const string VersionKey = "products:list:version";
 
-    public ProductsController(IUnitOfWork unitOfWork)
+    public ProductsController(IUnitOfWork unitOfWork, IDistributedCache cache)
     {
         _unitOfWork = unitOfWork;
+        _cache = cache;
     }
 
     public record CreateProductRequest(Guid CategoryId, string NameAr, string NameEn, string Description, decimal BasePrice);
     public record UpdateProductRequest(Guid CategoryId, string NameAr, string NameEn, string Description, decimal BasePrice);
     public record UpsertPriceRequest(Guid CountryId, decimal Price);
     public record UpsertInventoryRequest(Guid CountryId, int Quantity);
+    
+    public record ProductListItemDto(
+        Guid Id,
+        string NameAr,
+        string NameEn,
+        string Description,
+        string Category,
+        DateTime CreatedAt,
+        decimal Price,
+        int Stock
+    );
+    
+    public record ProductDetailDto(
+        Guid Id,
+        string NameAr,
+        string NameEn,
+        string Description,
+        string Category,
+        decimal Price,
+        int Stock,
+        DateTime CreatedAt
+    );
 
     [HttpGet]
     public async Task<IActionResult> GetAll(
@@ -34,6 +62,19 @@ public class ProductsController : ControllerBase
         page = page < 1 ? 1 : page;
         pageSize = pageSize is < 1 or > 100 ? 20 : pageSize;
 
+        // Build cache key
+        var version = await _cache.GetStringAsync(VersionKey, cancellationToken) ?? "1";
+        var cacheKey = $"products:list:{categoryId}:{search}:{countryId}:{page}:{pageSize}:v{version}";
+
+        // Try to get from cache
+        var cached = await _cache.GetStringAsync(cacheKey, cancellationToken);
+        if (cached is not null)
+        {
+            var result = JsonSerializer.Deserialize<object>(cached);
+            return Ok(result);
+        }
+
+        // Query from database
         var query = _unitOfWork.Products.Query().Include(p => p.Category).AsQueryable();
 
         if (categoryId.HasValue)
@@ -63,8 +104,18 @@ public class ProductsController : ControllerBase
             })
             .ToListAsync(cancellationToken);
 
+        object result;
+
         if (!countryId.HasValue)
-            return Ok(new { data = products, totalCount, page, pageSize, totalPages = (int)Math.Ceiling(totalCount / (double)pageSize) });
+        {
+            result = new { data = products, totalCount, page, pageSize, totalPages = (int)Math.Ceiling(totalCount / (double)pageSize) };
+            
+            // Cache
+            var options = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl };
+            await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(result), options, cancellationToken);
+            
+            return Ok(result);
+        }
 
         var productIds = products.Select(p => p.Id).ToList();
 
@@ -76,24 +127,40 @@ public class ProductsController : ControllerBase
             .Where(i => productIds.Contains(i.ProductId) && i.CountryId == countryId.Value)
             .ToDictionaryAsync(i => i.ProductId, i => i.Quantity, cancellationToken);
 
-        var enriched = products.Select(p => new
-        {
+        var enriched = products.Select(p => new ProductListItemDto(
             p.Id,
             p.NameAr,
             p.NameEn,
             p.Description,
             p.Category,
             p.CreatedAt,
-            Price = prices.TryGetValue(p.Id, out var price) ? price : p.BasePrice,
-            Stock = stock.TryGetValue(p.Id, out var qty) ? qty : 0
-        });
+            prices.TryGetValue(p.Id, out var price) ? price : p.BasePrice,
+            stock.TryGetValue(p.Id, out var qty) ? qty : 0
+        ));
 
-        return Ok(new { data = enriched, totalCount, page, pageSize, totalPages = (int)Math.Ceiling(totalCount / (double)pageSize) });
+        result = new { data = enriched, totalCount, page, pageSize, totalPages = (int)Math.Ceiling(totalCount / (double)pageSize) };
+
+        // Cache
+        var cacheOptions = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl };
+        await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(result), cacheOptions, cancellationToken);
+
+        return Ok(result);
     }
 
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(Guid id, [FromQuery] Guid? countryId, CancellationToken cancellationToken)
     {
+        // Build cache key
+        var cacheKey = $"products:{id}:{countryId}";
+
+        // Try to get from cache
+        var cached = await _cache.GetStringAsync(cacheKey, cancellationToken);
+        if (cached is not null)
+        {
+            var result = JsonSerializer.Deserialize<ProductDetailDto>(cached);
+            return Ok(result);
+        }
+
         var product = await _unitOfWork.Products.Query()
             .Include(p => p.Category)
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
@@ -119,17 +186,22 @@ public class ProductsController : ControllerBase
                 .FirstOrDefaultAsync(cancellationToken);
         }
 
-        return Ok(new
-        {
+        var result = new ProductDetailDto(
             product.Id,
             product.NameAr,
             product.NameEn,
             product.Description,
-            Category = product.Category.NameEn,
-            Price = price,
-            Stock = stock,
+            product.Category.NameEn,
+            price,
+            stock,
             product.CreatedAt
-        });
+        );
+
+        // Cache
+        var options = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl };
+        await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(result), options, cancellationToken);
+
+        return Ok(result);
     }
 
     [HttpPost]
@@ -154,6 +226,9 @@ public class ProductsController : ControllerBase
         await _unitOfWork.Products.AddAsync(product, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
+        // Invalidate cache - increment version
+        await InvalidateProductCacheAsync(cancellationToken);
+
         return CreatedAtAction(nameof(GetById), new { id = product.Id }, new { product.Id });
     }
 
@@ -173,6 +248,10 @@ public class ProductsController : ControllerBase
 
         _unitOfWork.Products.Update(product);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Invalidate cache
+        await InvalidateProductCacheAsync(cancellationToken);
+
         return Ok(new { product.Id });
     }
 
@@ -186,19 +265,11 @@ public class ProductsController : ControllerBase
 
         _unitOfWork.Products.Remove(product);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Invalidate cache
+        await InvalidateProductCacheAsync(cancellationToken);
+
         return NoContent();
-    }
-
-    [HttpGet("{id}/prices")]
-    public async Task<IActionResult> GetPrices(Guid id, CancellationToken cancellationToken)
-    {
-        var prices = await _unitOfWork.ProductPrices.Query()
-            .Include(pp => pp.Country)
-            .Where(pp => pp.ProductId == id)
-            .Select(pp => new { Country = pp.Country.Name, pp.CountryId, pp.Price })
-            .ToListAsync(cancellationToken);
-
-        return Ok(prices);
     }
 
     [HttpPut("{id}/prices")]
@@ -225,19 +296,11 @@ public class ProductsController : ControllerBase
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Invalidate cache
+        await InvalidateProductCacheAsync(cancellationToken);
+
         return Ok(new { message = "Price updated." });
-    }
-
-    [HttpGet("{id}/inventory")]
-    public async Task<IActionResult> GetInventory(Guid id, CancellationToken cancellationToken)
-    {
-        var stock = await _unitOfWork.Inventories.Query()
-            .Include(i => i.Country)
-            .Where(i => i.ProductId == id)
-            .Select(i => new { Country = i.Country.Name, i.CountryId, i.Quantity, i.UpdatedAt })
-            .ToListAsync(cancellationToken);
-
-        return Ok(stock);
     }
 
     [HttpPut("{id}/inventory")]
@@ -266,6 +329,45 @@ public class ProductsController : ControllerBase
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Invalidate cache
+        await InvalidateProductCacheAsync(cancellationToken);
+
         return Ok(new { message = "Inventory updated." });
+    }
+
+    [HttpGet("{id}/prices")]
+    public async Task<IActionResult> GetPrices(Guid id, CancellationToken cancellationToken)
+    {
+        var prices = await _unitOfWork.ProductPrices.Query()
+            .Include(pp => pp.Country)
+            .Where(pp => pp.ProductId == id)
+            .Select(pp => new { Country = pp.Country.Name, pp.CountryId, pp.Price })
+            .ToListAsync(cancellationToken);
+
+        return Ok(prices);
+    }
+
+    [HttpGet("{id}/inventory")]
+    public async Task<IActionResult> GetInventory(Guid id, CancellationToken cancellationToken)
+    {
+        var stock = await _unitOfWork.Inventories.Query()
+            .Include(i => i.Country)
+            .Where(i => i.ProductId == id)
+            .Select(i => new { Country = i.Country.Name, i.CountryId, i.Quantity, i.UpdatedAt })
+            .ToListAsync(cancellationToken);
+
+        return Ok(stock);
+    }
+
+    private async Task InvalidateProductCacheAsync(CancellationToken cancellationToken)
+    {
+        // Increment version to invalidate all list caches
+        var currentVersion = await _cache.GetStringAsync(VersionKey, cancellationToken) ?? "1";
+        var newVersion = (int.Parse(currentVersion) + 1).ToString();
+        await _cache.SetStringAsync(VersionKey, newVersion, new DistributedCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1)
+        }, cancellationToken);
     }
 }
