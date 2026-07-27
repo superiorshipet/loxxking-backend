@@ -20,6 +20,7 @@ public interface IUnitOfWork
     IRepository<SiteVisit> SiteVisits { get; }
     IRepository<Offer> Offers { get; }
     IRepository<BankTransfer> BankTransfers { get; }
+    IRepository<OfferProduct> OfferProducts { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
