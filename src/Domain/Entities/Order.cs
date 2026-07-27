@@ -17,6 +17,10 @@ public class Order {
     public string Address { get; set; } = default!;
     public string Phone { get; set; } = default!;
     public string? Notes { get; set; }
+    // Guest-specific fields (populated when CustomerId is null)
+    public string? GuestName { get; set; }
+    public string? GuestPhone { get; set; }
+    public string? GuestAddress { get; set; }
     public decimal TotalAmount { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public ICollection<OrderItem> OrderItems { get; set; } = new List<OrderItem>();

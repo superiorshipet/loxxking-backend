@@ -81,7 +81,7 @@ public class InvoicesController : ControllerBase
         });
     }
 
-    [HttpPost]
+    [HttpPost("{orderId}")]
     [Authorize(Roles = "Admin,StoreManager")]
     public async Task<IActionResult> Create(Guid orderId, CancellationToken cancellationToken)
     {
@@ -92,17 +92,18 @@ public class InvoicesController : ControllerBase
         if (order is null)
             return NotFound(new { message = "Order not found." });
 
+        // Return existing invoice if already generated
         var existing = await _unitOfWork.Invoices.Query()
-            .AnyAsync(i => i.OrderId == orderId, cancellationToken);
+            .FirstOrDefaultAsync(i => i.OrderId == orderId, cancellationToken);
 
-        if (existing)
-            return BadRequest(new { message = "Invoice already exists for this order." });
+        if (existing is not null)
+            return Ok(new { existing.Id, existing.InvoiceNumber, existing.TotalAmount, existing.IssuedAt, alreadyExisted = true });
 
         var invoice = new Invoice
         {
             Id = Guid.NewGuid(),
             OrderId = orderId,
-            InvoiceNumber = $"INV-{DateTime.UtcNow:yyyyMMdd}-{orderId.ToString().Substring(0, 8)}",
+            InvoiceNumber = $"INV-{DateTime.UtcNow:yyyyMMdd}-{orderId.ToString()[..8].ToUpper()}",
             TotalAmount = order.TotalAmount,
             IssuedAt = DateTime.UtcNow
         };
@@ -110,7 +111,21 @@ public class InvoicesController : ControllerBase
         await _unitOfWork.Invoices.AddAsync(invoice, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return CreatedAtAction(nameof(GetById), new { id = invoice.Id }, invoice);
+        return CreatedAtAction(nameof(GetById), new { id = invoice.Id }, new { invoice.Id, invoice.InvoiceNumber, invoice.TotalAmount, invoice.IssuedAt });
+    }
+
+    /// <summary>Find an invoice by its order ID (used by the frontend download button).</summary>
+    [HttpGet("by-order/{orderId}")]
+    [Authorize(Roles = "Admin,StoreManager")]
+    public async Task<IActionResult> GetByOrderId(Guid orderId, CancellationToken cancellationToken)
+    {
+        var invoice = await _unitOfWork.Invoices.Query()
+            .FirstOrDefaultAsync(i => i.OrderId == orderId, cancellationToken);
+
+        if (invoice is null)
+            return NotFound(new { message = "No invoice for this order yet. Generate one first." });
+
+        return Ok(new { invoice.Id, invoice.InvoiceNumber, invoice.TotalAmount, invoice.IssuedAt });
     }
 
     [HttpGet("{id}/pdf")]
@@ -123,6 +138,8 @@ public class InvoicesController : ControllerBase
         var invoice = await _unitOfWork.Invoices.Query()
             .Include(i => i.Order)
                 .ThenInclude(o => o.Customer)
+            .Include(i => i.Order)
+                .ThenInclude(o => o.Country)
             .Include(i => i.Order)
                 .ThenInclude(o => o.OrderItems)
                     .ThenInclude(oi => oi.Product)

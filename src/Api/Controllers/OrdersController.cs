@@ -9,18 +9,24 @@ namespace Api.Controllers;
 
 [ApiController]
 [Route("api/orders")]
-[Authorize]
 public class OrdersController : ControllerBase
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IOrderNumberGenerator _orderNumberGenerator;
 
-    public OrdersController(IUnitOfWork unitOfWork)
+    public OrdersController(IUnitOfWork unitOfWork, IOrderNumberGenerator orderNumberGenerator)
     {
         _unitOfWork = unitOfWork;
+        _orderNumberGenerator = orderNumberGenerator;
     }
 
     public record OrderItemRequest(Guid ProductId, int Quantity);
-    public record CreateOrderRequest(string Address, string Phone, string? Notes, PaymentMethod PaymentMethod, List<OrderItemRequest> Items);
+    // Standard (authenticated) order request — country resolved from token/geo
+    public record CreateOrderRequest(string Address, string Phone, string? Notes, PaymentMethod PaymentMethod, List<OrderItemRequest> Items, Guid? CountryId = null);
+    // Guest order request — country supplied by name (matched to DB record)
+    public record CreateGuestOrderRequest(string Name, string Phone, string Address, string CountryName, PaymentMethod PaymentMethod, List<OrderItemRequest> Items, string? Notes = null);
+    // Track an order by its human-readable number + phone verification
+    public record TrackOrderRequest(string OrderNumber, string Phone);
     public record UpdateOrderStatusRequest(OrderStatus Status);
     public record UpdateOrderRequest(string Address, string Phone, string? Notes);
 
@@ -140,23 +146,69 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Customer")]
+    [AllowAnonymous]
     public async Task<IActionResult> Create([FromBody] CreateOrderRequest request, CancellationToken cancellationToken)
     {
         if (request.Items is null || request.Items.Count == 0)
             return BadRequest(new { message = "Order must contain at least one item." });
 
-        var customerId = GetCurrentUserId();
-        var customer = await _unitOfWork.Users.GetByIdAsync(customerId, cancellationToken);
-        if (customer is null)
-            return Unauthorized();
+        // ── Resolve country ──────────────────────────────────────────────────────
+        // Priority: (1) CountryId in request body, (2) authenticated customer's country,
+        //           (3) X-Geo-Country header set by GeoLocationMiddleware, (4) first country in DB.
+        Guid? resolvedCountryId = null;
+
+        if (request.CountryId.HasValue && request.CountryId.Value != Guid.Empty)
+        {
+            resolvedCountryId = request.CountryId.Value;
+        }
+        else if (User.Identity?.IsAuthenticated == true)
+        {
+            var customerId = GetCurrentUserId();
+            if (customerId != Guid.Empty)
+            {
+                var customer = await _unitOfWork.Users.GetByIdAsync(customerId, cancellationToken);
+                resolvedCountryId = customer?.CountryId;
+            }
+        }
+
+        if (resolvedCountryId is null)
+        {
+            var geoCountryName = HttpContext.Request.Headers["X-Geo-Country"].FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(geoCountryName))
+            {
+                var geoCountry = await _unitOfWork.Countries.Query()
+                    .FirstOrDefaultAsync(c => c.Name.ToLower() == geoCountryName.ToLower(), cancellationToken);
+                resolvedCountryId = geoCountry?.Id;
+            }
+        }
+
+        if (resolvedCountryId is null)
+        {
+            // Fallback: pick the first available country so the order is never blocked
+            var fallback = await _unitOfWork.Countries.Query().FirstOrDefaultAsync(cancellationToken);
+            resolvedCountryId = fallback?.Id;
+        }
+
+        if (resolvedCountryId is null)
+            return BadRequest(new { message = "Unable to determine your country. Please specify a countryId." });
+
+        // ── Resolve optional authenticated customer ───────────────────────────────
+        Guid? authenticatedCustomerId = null;
+        if (User.Identity?.IsAuthenticated == true)
+        {
+            var uid = GetCurrentUserId();
+            if (uid != Guid.Empty) authenticatedCustomerId = uid;
+        }
+
+        // ── Generate unique order number ─────────────────────────────────────────
+        var orderNumber = await _orderNumberGenerator.GenerateAsync(cancellationToken);
 
         var order = new Order
         {
             Id = Guid.NewGuid(),
-            CustomerId = customerId,
-            Customer = customer,
-            CountryId = customer.CountryId,
+            OrderNumber = orderNumber,
+            CustomerId = authenticatedCustomerId,
+            CountryId = resolvedCountryId.Value,
             Status = OrderStatus.NewOrder,
             PaymentMethod = request.PaymentMethod,
             Address = request.Address,
@@ -168,16 +220,26 @@ public class OrdersController : ControllerBase
         decimal total = 0;
         foreach (var item in request.Items)
         {
+            // Try price for resolved country; fall back to any price for the product
             var price = await _unitOfWork.ProductPrices.Query()
-                .Where(p => p.ProductId == item.ProductId && p.CountryId == customer.CountryId)
+                .Where(p => p.ProductId == item.ProductId && p.CountryId == resolvedCountryId.Value)
+                .Select(p => (decimal?)p.Price)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            price ??= await _unitOfWork.ProductPrices.Query()
+                .Where(p => p.ProductId == item.ProductId)
                 .Select(p => (decimal?)p.Price)
                 .FirstOrDefaultAsync(cancellationToken);
 
             if (price is null)
-                return BadRequest(new { message = $"Product {item.ProductId} has no price for your country." });
+                return BadRequest(new { message = $"Product {item.ProductId} has no price configured." });
 
+            // Try inventory for resolved country; fall back to any inventory for the product
             var inventory = await _unitOfWork.Inventories.Query()
-                .FirstOrDefaultAsync(i => i.ProductId == item.ProductId && i.CountryId == customer.CountryId, cancellationToken);
+                .FirstOrDefaultAsync(i => i.ProductId == item.ProductId && i.CountryId == resolvedCountryId.Value, cancellationToken);
+
+            inventory ??= await _unitOfWork.Inventories.Query()
+                .FirstOrDefaultAsync(i => i.ProductId == item.ProductId, cancellationToken);
 
             if (inventory is null || inventory.Quantity < item.Quantity)
                 return BadRequest(new { message = $"Insufficient stock for product {item.ProductId}." });
@@ -201,7 +263,9 @@ public class OrdersController : ControllerBase
         await _unitOfWork.Orders.AddAsync(order, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return CreatedAtAction(nameof(GetById), new { id = order.Id }, new { order.Id, order.TotalAmount });
+        return CreatedAtAction(nameof(GetById), new { id = order.Id },
+            new { order.Id, order.OrderNumber, order.TotalAmount, CountryId = resolvedCountryId });
+
     }
 
     [HttpPatch("{id}/status")]
@@ -293,6 +357,134 @@ public class OrdersController : ControllerBase
             .ToListAsync(cancellationToken);
 
         return Ok(logs);
+    }
+
+    // ─── Guest Order (by name) ───────────────────────────────────────────────
+
+    [HttpPost("guest")]
+    [AllowAnonymous]
+    public async Task<IActionResult> CreateGuestOrder([FromBody] CreateGuestOrderRequest request, CancellationToken cancellationToken)
+    {
+        if (request.Items is null || request.Items.Count == 0)
+            return BadRequest(new { message = "Order must contain at least one item." });
+
+        // Resolve country by name
+        var country = await _unitOfWork.Countries.Query()
+            .FirstOrDefaultAsync(c => c.Name.ToLower() == request.CountryName.ToLower(), cancellationToken);
+
+        if (country is null)
+            return BadRequest(new { message = $"Country '{request.CountryName}' not found. Please check available countries." });
+
+        var orderNumber = await _orderNumberGenerator.GenerateAsync(cancellationToken);
+
+        var order = new Order
+        {
+            Id = Guid.NewGuid(),
+            OrderNumber = orderNumber,
+            CustomerId = null,
+            CountryId = country.Id,
+            Country = country,
+            Status = OrderStatus.NewOrder,
+            PaymentMethod = request.PaymentMethod,
+            Address = request.Address,
+            Phone = request.Phone,
+            Notes = request.Notes,
+            GuestName = request.Name,
+            GuestPhone = request.Phone,
+            GuestAddress = request.Address,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        decimal total = 0;
+        foreach (var item in request.Items)
+        {
+            var price = await _unitOfWork.ProductPrices.Query()
+                .Where(p => p.ProductId == item.ProductId && p.CountryId == country.Id)
+                .Select(p => (decimal?)p.Price)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            price ??= await _unitOfWork.ProductPrices.Query()
+                .Where(p => p.ProductId == item.ProductId)
+                .Select(p => (decimal?)p.Price)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (price is null)
+                return BadRequest(new { message = $"Product {item.ProductId} has no price configured." });
+
+            var inventory = await _unitOfWork.Inventories.Query()
+                .FirstOrDefaultAsync(i => i.ProductId == item.ProductId && i.CountryId == country.Id, cancellationToken);
+
+            inventory ??= await _unitOfWork.Inventories.Query()
+                .FirstOrDefaultAsync(i => i.ProductId == item.ProductId, cancellationToken);
+
+            if (inventory is null || inventory.Quantity < item.Quantity)
+                return BadRequest(new { message = $"Insufficient stock for product {item.ProductId}." });
+
+            inventory.Quantity -= item.Quantity;
+            inventory.UpdatedAt = DateTime.UtcNow;
+            _unitOfWork.Inventories.Update(inventory);
+
+            order.OrderItems.Add(new OrderItem
+            {
+                Id = Guid.NewGuid(),
+                ProductId = item.ProductId,
+                Quantity = item.Quantity,
+                PriceAtOrder = price.Value
+            });
+
+            total += price.Value * item.Quantity;
+        }
+
+        order.TotalAmount = total;
+        await _unitOfWork.Orders.AddAsync(order, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return CreatedAtAction(nameof(GetById), new { id = order.Id },
+            new { order.Id, order.OrderNumber, order.TotalAmount, Country = country.Name });
+    }
+
+    // ─── Public order tracking ────────────────────────────────────────────────
+
+    [HttpPost("track")]
+    [AllowAnonymous]
+    public async Task<IActionResult> TrackOrder([FromBody] TrackOrderRequest request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.OrderNumber) || string.IsNullOrWhiteSpace(request.Phone))
+            return BadRequest(new { message = "OrderNumber and Phone are required." });
+
+        var order = await _unitOfWork.Orders.Query()
+            .Include(o => o.Country)
+            .Include(o => o.OrderItems).ThenInclude(i => i.Product)
+            .FirstOrDefaultAsync(o =>
+                o.OrderNumber == request.OrderNumber &&
+                (o.Phone == request.Phone || o.GuestPhone == request.Phone),
+                cancellationToken);
+
+        if (order is null)
+            return NotFound(new { message = "Order not found. Please check your Order Number and Phone." });
+
+        return Ok(new
+        {
+            order.Id,
+            order.OrderNumber,
+            CustomerName = order.GuestName ?? order.Customer?.Name ?? "Customer",
+            Country = order.Country?.Name,
+            Status = order.Status.ToString(),
+            PaymentMethod = order.PaymentMethod.ToString(),
+            order.ShipmentCode,
+            order.Address,
+            order.Phone,
+            order.Notes,
+            order.TotalAmount,
+            order.CreatedAt,
+            Items = order.OrderItems.Select(i => new
+            {
+                i.Id,
+                ProductName = i.Product.NameEn,
+                i.Quantity,
+                i.PriceAtOrder
+            })
+        });
     }
 
     private Guid GetCurrentUserId()
