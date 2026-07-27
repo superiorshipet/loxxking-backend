@@ -202,11 +202,15 @@ if ((Environment.GetEnvironmentVariable("RUN_MIGRATIONS") ?? "false")
 
 app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
 app.UseMiddleware<GeoLocationMiddleware>();
+
+// CORS must be first — before HttpsRedirection and Auth — so OPTIONS preflight succeeds
+app.UseCors("AllowAll");
+
 app.UseResponseCompression();
 
-app.UseHttpsRedirection();
-
-app.UseCors("AllowAll");
+// Skip HTTPS redirect in development so the frontend can talk to http://localhost:5196
+if (!app.Environment.IsDevelopment())
+    app.UseHttpsRedirection();
 
 app.UseRateLimiter();
 

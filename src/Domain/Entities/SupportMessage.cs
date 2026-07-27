@@ -1,17 +1,22 @@
 namespace Domain.Entities;
 
+/// <summary>A single message in a support conversation thread.</summary>
 public class SupportMessage
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+
+    /// <summary>Groups messages into one conversation thread.</summary>
     public Guid ConversationId { get; set; }
-    public Guid? SenderId { get; set; }          // null = guest/anonymous
-    public User? Sender { get; set; }
-    public Guid? RecipientId { get; set; } // Added
+
+    /// <summary>"Customer" or "Staff"</summary>
+    public string SenderType { get; set; } = "Customer";
+
+    /// <summary>Display name — guest name or staff name.</summary>
+    public string SenderName { get; set; } = "Customer";
+
     public string Message { get; set; } = string.Empty;
-    public string? AttachmentUrl { get; set; }
-    public Guid? RelatedOrderId { get; set; }
-    public Guid? RelatedReviewId { get; set; }
-    public string? GuestName { get; set; }      // name for guest/anonymous senders
+
     public bool IsRead { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

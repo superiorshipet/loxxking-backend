@@ -717,19 +717,19 @@ async function trackOrder() {
 }
 
 // ============================================================
-// LIVE SUPPORT CHAT HANDLING (CUSTOMER & ADMIN SYNC)
+// LIVE SUPPORT CHAT — Customer widget & Admin panel
 // ============================================================
 
-let _chatPollTimer = null;
+let _chatPollTimer     = null;
 let _adminChatPollTimer = null;
+
+// ─── Customer Widget ──────────────────────────────────────────────────────────
 
 async function openCustomerChatWidget() {
     document.getElementById('customer-chat-widget').style.display = 'flex';
-    // customerConversationId is only set after first successful send
     await loadCustomerChatHistory();
-    // Poll for admin replies every 4s while widget is open
     clearInterval(_chatPollTimer);
-    _chatPollTimer = setInterval(loadCustomerChatHistory, 4000);
+    _chatPollTimer = setInterval(loadCustomerChatHistory, 4000); // poll for staff replies
 }
 
 function closeCustomerChatWidget() {
@@ -738,158 +738,158 @@ function closeCustomerChatWidget() {
 }
 
 async function loadCustomerChatHistory() {
-    const threadBox = document.getElementById('customer-chat-messages');
-    if (!customerConversationId) return; // no conversation yet, nothing to load
-
+    const box = document.getElementById('customer-chat-messages');
+    if (!customerConversationId) return;
     try {
-        // NOTE: no admin token — fetch as guest/anonymous
-        const messages = await fetch(`${currentApiBase}/support-chat/messages/${customerConversationId}`, {
-            headers: { 'Content-Type': 'application/json' }
-        }).then(r => r.json());
-
-        if (Array.isArray(messages) && messages.length > 0) {
-            const atBottom = threadBox.scrollTop + threadBox.clientHeight >= threadBox.scrollHeight - 10;
-            threadBox.innerHTML = messages.map(m => {
-                const isCustomer = !m.sender || m.sender.role === 'Customer';
-                return `<div class="chat-msg ${isCustomer ? 'customer' : 'staff'}">${escapeHtml(m.message)}</div>`;
-            }).join('');
-            if (atBottom) threadBox.scrollTop = threadBox.scrollHeight;
-        }
-    } catch (_) { /* silent — backend not yet reachable */ }
+        const msgs = await fetch(`${currentApiBase}/support-chat/messages/${customerConversationId}`)
+            .then(r => r.ok ? r.json() : []);
+        if (!Array.isArray(msgs) || msgs.length === 0) return;
+        const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 10;
+        box.innerHTML = msgs.map(m => {
+            const isStaff = m.senderType === 'Staff';
+            return `
+            <div class="chat-msg ${isStaff ? 'staff' : 'customer'}">
+                <div>${escapeHtml(m.message)}</div>
+                ${isStaff ? `<div style="font-size:10px;opacity:0.55;margin-top:2px;">📞 ${escapeHtml(m.senderName)} · ${new Date(m.createdAt).toLocaleTimeString()}</div>` : ''}
+            </div>`;
+        }).join('');
+        if (atBottom) box.scrollTop = box.scrollHeight;
+    } catch (_) { /* server not reachable yet */ }
 }
 
 async function sendCustomerChatMessage() {
-    const input = document.getElementById('customer-chat-input');
+    const input  = document.getElementById('customer-chat-input');
     const msgText = input.value.trim();
     if (!msgText) return;
-
-    const threadBox = document.getElementById('customer-chat-messages');
     input.value = '';
 
-    // Optimistically show the message immediately
-    const msgDiv = document.createElement('div');
-    msgDiv.className = 'chat-msg customer';
-    msgDiv.textContent = msgText;
-    threadBox.appendChild(msgDiv);
-    threadBox.scrollTop = threadBox.scrollHeight;
+    // Optimistic UI
+    const box = document.getElementById('customer-chat-messages');
+    const div = document.createElement('div');
+    div.className = 'chat-msg customer';
+    div.innerHTML = `<div>${escapeHtml(msgText)}</div>`;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
 
     try {
-        // No admin token — send as guest. conversationId may be empty on first message.
-        const body = {
-            conversationId: customerConversationId || '00000000-0000-0000-0000-000000000000',
-            message: msgText
-        };
-
         const resp = await fetch(`${currentApiBase}/support-chat/send`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
+            body: JSON.stringify({
+                conversationId: customerConversationId || '00000000-0000-0000-0000-000000000000',
+                message: msgText,
+                senderName: 'Customer'  // could ask for name if desired
+            })
         });
-
         if (resp.ok) {
             const data = await resp.json();
-            // On first send the backend returns the real conversationId — save it
-            const returnedId = data.conversationId || data.ConversationId;
-            if (returnedId && returnedId !== '00000000-0000-0000-0000-000000000000') {
-                customerConversationId = returnedId;
-                localStorage.setItem('loxx_customer_conv_id', returnedId);
+            const id = data.conversationId;
+            if (id && id !== '00000000-0000-0000-0000-000000000000') {
+                customerConversationId = id;
+                localStorage.setItem('loxx_customer_conv_id', id);
             }
-            logApiCall('POST', '/support-chat/send', 200, 0, data, false);
+        } else {
+            div.style.opacity = '0.4';
+            div.title = 'Failed to deliver';
         }
-    } catch (err) {
-        console.warn('Customer chat send failed:', err);
+    } catch (e) {
+        div.style.opacity = '0.4';
+        div.title = 'Failed to deliver';
     }
 }
 
-// ─── Admin Support Chat Center ────────────────────────────────────────────────
+// ─── Admin / Call-Center Panel ────────────────────────────────────────────────
 
 async function loadSupportConversations() {
     const container = document.getElementById('admin-chat-threads');
     if (!container) return;
-    container.innerHTML = '<div class="loading-state">Loading chat threads...</div>';
+    container.innerHTML = '<div class="loading-state">⏳ Loading conversations...</div>';
 
     try {
         await ensureAdminToken();
-        const conversations = await apiRequest('/support-chat/conversations');
+        const convs = await apiRequest('/support-chat/conversations');
 
-        if (!conversations || conversations.length === 0) {
+        if (!convs || convs.length === 0) {
             container.innerHTML = `
-                <div class="loading-state" style="flex-direction:column;gap:8px;">
-                    <div style="font-size:28px;">💬</div>
-                    <div>No support chats yet.</div>
-                    <div style="font-size:12px;color:var(--text-muted);">Customers who use the chat widget will appear here.</div>
-                </div>`;
+            <div class="loading-state" style="flex-direction:column;gap:8px;padding:24px;">
+                <div style="font-size:32px;">💬</div>
+                <div style="font-weight:600;">No chats yet</div>
+                <div style="font-size:12px;color:var(--text-muted);">Customer messages appear here instantly.</div>
+            </div>`;
+
+            // Still keep polling every 5s for new ones
+            clearInterval(_adminChatPollTimer);
+            _adminChatPollTimer = setInterval(loadSupportConversations, 5000);
             return;
         }
 
-        container.innerHTML = conversations.map(c => {
-            const convId = c.conversationId || c.ConversationId;
-            const name = escapeHtml(c.senderName || c.SenderName || 'Customer');
-            const lastMsg = escapeHtml((c.lastMessage || c.LastMessage || '').substring(0, 60));
-            const time = new Date(c.lastMessageAt || c.LastMessageAt).toLocaleString();
+        container.innerHTML = convs.map(c => {
+            const convId  = c.conversationId;
+            const name    = escapeHtml(c.customerName || 'Customer');
+            const preview = escapeHtml((c.lastMessage || '').substring(0, 55));
+            const time    = new Date(c.lastMessageAt).toLocaleTimeString();
+            const unread  = c.unreadCount || 0;
             const isActive = currentChatConversationId === convId;
             return `
             <div class="list-item" onclick="loadChatMessages('${convId}')" style="
-                cursor:pointer;flex-direction:column;align-items:flex-start;
+                cursor:pointer;flex-direction:column;align-items:flex-start;gap:4px;
                 border-left:3px solid ${isActive ? 'var(--accent-blue)' : 'transparent'};
+                background:${isActive ? 'rgba(99,102,241,0.06)' : ''};
             ">
-                <div style="display:flex;justify-content:space-between;width:100%;">
+                <div style="display:flex;justify-content:space-between;width:100%;gap:8px;">
                     <strong>👤 ${name}</strong>
-                    <span style="font-size:10px;color:var(--text-muted);">${time}</span>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        ${unread > 0 ? `<span style="background:#ef4444;color:#fff;border-radius:99px;padding:1px 7px;font-size:10px;">${unread}</span>` : ''}
+                        <span style="font-size:10px;color:var(--text-muted);">${time}</span>
+                    </div>
                 </div>
-                <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">&ldquo;${lastMsg}&rdquo;</div>
-                <div style="font-size:10px;color:#6366f1;margin-top:2px;font-family:monospace;">${convId}</div>
+                <div style="font-size:12px;color:var(--text-muted);">&ldquo;${preview}&rdquo;</div>
             </div>`;
         }).join('');
 
-        // Auto-refresh admin conversations every 5s
+        // Poll for new conversations every 5s
         clearInterval(_adminChatPollTimer);
         _adminChatPollTimer = setInterval(async () => {
-            // Only refresh the thread list, not the open conversation
-            const updatedConvs = await apiRequest('/support-chat/conversations').catch(() => null);
-            if (!updatedConvs) return;
-            const oldIds = new Set(conversations.map(c => c.conversationId));
-            const newConvs = updatedConvs.filter(c => !oldIds.has(c.conversationId));
-            if (newConvs.length > 0) {
-                showToast('info', `💬 ${newConvs.length} new conversation(s) received!`);
+            const fresh = await apiRequest('/support-chat/conversations').catch(() => null);
+            if (!fresh) return;
+            if (fresh.length !== convs.length) {
+                const newCount = fresh.length - convs.length;
+                if (newCount > 0) showToast('info', `💬 ${newCount} new conversation(s)!`);
                 loadSupportConversations();
             }
         }, 5000);
 
     } catch (err) {
-        container.innerHTML = `<div class="loading-state" style="color:var(--accent-rose);">❌ Failed to load chats: ${err.message}</div>`;
+        container.innerHTML = `<div class="loading-state" style="color:var(--accent-rose);">❌ ${err.message}</div>`;
     }
 }
 
 async function loadChatMessages(conversationId) {
     currentChatConversationId = conversationId;
-    const msgBox = document.getElementById('admin-chat-messages');
+    const msgBox   = document.getElementById('admin-chat-messages');
     const inputRow = document.getElementById('admin-chat-input-row');
     if (!msgBox) return;
 
-    // Highlight selected conversation
+    // Highlight selected thread
     document.querySelectorAll('#admin-chat-threads .list-item').forEach(el => {
         el.style.borderLeftColor = 'transparent';
+        el.style.background = '';
     });
-    const active = [...document.querySelectorAll('#admin-chat-threads .list-item')]
-        .find(el => el.textContent.includes(conversationId.substring(0,8)));
-    if (active) active.style.borderLeftColor = 'var(--accent-blue)';
+    event?.currentTarget?.style && (event.currentTarget.style.borderLeftColor = 'var(--accent-blue)');
 
     try {
         await ensureAdminToken();
-        const messages = await apiRequest(`/support-chat/messages/${conversationId}`);
+        const msgs = await apiRequest(`/support-chat/messages/${conversationId}`);
 
-        if (!messages || messages.length === 0) {
-            msgBox.innerHTML = '<div class="loading-state">No messages in this conversation.</div>';
+        if (!msgs || msgs.length === 0) {
+            msgBox.innerHTML = '<div class="loading-state">No messages yet.</div>';
         } else {
-            msgBox.innerHTML = messages.map(m => {
-                const isCustomer = !m.sender || m.sender.role === 'Customer';
-                const senderName = m.sender?.name || 'Customer';
-                const time = new Date(m.createdAt || m.CreatedAt).toLocaleTimeString();
+            msgBox.innerHTML = msgs.map(m => {
+                const isStaff = m.senderType === 'Staff';
                 return `
-                <div class="chat-msg ${isCustomer ? 'customer' : 'staff'}" style="flex-direction:column;gap:2px;">
+                <div class="chat-msg ${isStaff ? 'staff' : 'customer'}" style="flex-direction:column;gap:3px;">
                     <div>${escapeHtml(m.message)}</div>
-                    <div style="font-size:10px;opacity:0.6;">${escapeHtml(senderName)} · ${time}</div>
+                    <div style="font-size:10px;opacity:0.55;">${escapeHtml(m.senderName)} · ${new Date(m.createdAt).toLocaleTimeString()}</div>
                 </div>`;
             }).join('');
             msgBox.scrollTop = msgBox.scrollHeight;
@@ -897,9 +897,25 @@ async function loadChatMessages(conversationId) {
 
         if (inputRow) inputRow.style.display = 'flex';
 
-        // Poll this conversation for new replies every 4s
+        // Mark as read (fire-and-forget)
+        apiRequest(`/support-chat/conversations/${conversationId}/read`, { method: 'PATCH' }).catch(() => {});
+
+        // Poll this thread for new messages every 4s
         clearInterval(_adminChatPollTimer);
-        _adminChatPollTimer = setInterval(() => loadChatMessages(conversationId), 4000);
+        _adminChatPollTimer = setInterval(async () => {
+            const fresh = await apiRequest(`/support-chat/messages/${conversationId}`).catch(() => null);
+            if (!fresh || fresh.length === msgs.length) return;
+            // Re-render without full reload
+            msgBox.innerHTML = fresh.map(m => {
+                const isStaff = m.senderType === 'Staff';
+                return `
+                <div class="chat-msg ${isStaff ? 'staff' : 'customer'}" style="flex-direction:column;gap:3px;">
+                    <div>${escapeHtml(m.message)}</div>
+                    <div style="font-size:10px;opacity:0.55;">${escapeHtml(m.senderName)} · ${new Date(m.createdAt).toLocaleTimeString()}</div>
+                </div>`;
+            }).join('');
+            msgBox.scrollTop = msgBox.scrollHeight;
+        }, 4000);
 
     } catch (err) {
         msgBox.innerHTML = `<div class="loading-state" style="color:var(--accent-rose);">❌ ${err.message}</div>`;
@@ -908,28 +924,24 @@ async function loadChatMessages(conversationId) {
 }
 
 async function sendAdminChatMessage() {
-    const input = document.getElementById('admin-chat-message-input');
+    const input   = document.getElementById('admin-chat-message-input');
     const message = input.value.trim();
-    if (!message || !currentChatConversationId) {
-        showToast('error', 'Select a conversation first');
-        return;
-    }
+    if (!message) return;
+    if (!currentChatConversationId) { showToast('error', 'Select a conversation first'); return; }
 
+    input.value = '';
     try {
         await ensureAdminToken();
         await apiRequest('/support-chat/send', {
             method: 'POST',
-            body: JSON.stringify({
-                conversationId: currentChatConversationId,
-                message
-            })
+            body: JSON.stringify({ conversationId: currentChatConversationId, message })
         });
-        input.value = '';
         await loadChatMessages(currentChatConversationId);
     } catch (err) {
-        showToast('error', `Failed to send reply: ${err.message}`);
+        showToast('error', `Send failed: ${err.message}`);
     }
 }
+
 
 // ============================================================
 // ADMIN MANAGEMENT SUITE: ALL CRUD OPERATIONS
