@@ -39,28 +39,37 @@ public class QuestPdfInvoiceGenerator : IInvoicePdfGenerator
                             {
                                 col2.Item().Text($"Invoice Number: {invoice.InvoiceNumber}");
                                 col2.Item().Text($"Date: {invoice.IssuedAt:dd/MM/yyyy HH:mm}");
-                                col2.Item().Text($"Order ID: {invoice.OrderId}");
+                                col2.Item().Text($"Order: {invoice.Order?.OrderNumber ?? invoice.OrderId.ToString()[..8]}");
+                                if (invoice.Order?.Country != null)
+                                    col2.Item().Text($"Country: {invoice.Order.Country.Name}");
                             });
 
-                            if (invoice.Order != null)
+                            row.RelativeItem().Column(col2 =>
                             {
-                                row.RelativeItem().Column(col2 =>
+                                col2.Item().Text("Customer Information:").Bold();
+                                if (invoice.Order?.Customer != null)
                                 {
-                                    col2.Item().Text("Customer Information:");
-                                    // Use GuestName if no User, otherwise User.Name
-                                    if (invoice.Order.User != null)
-                                    {
-                                        col2.Item().Text($"Name: {invoice.Order.User.Name}");
-                                        col2.Item().Text($"Email: {invoice.Order.User.Email}");
-                                    }
-                                    else
-                                    {
-                                        col2.Item().Text($"Name: {invoice.Order.GuestName}");
-                                        col2.Item().Text($"Phone: {invoice.Order.GuestPhone}");
-                                    }
-                                });
-                            }
+                                    col2.Item().Text($"Name: {invoice.Order.Customer.Name}");
+                                    col2.Item().Text($"Email: {invoice.Order.Customer.Email}");
+                                    col2.Item().Text($"Phone: {invoice.Order.Customer.Phone}");
+                                }
+                                else if (invoice.Order != null)
+                                {
+                                    // Guest order
+                                    var guestName = invoice.Order.GuestName ?? invoice.Order.Phone ?? "Guest";
+                                    var guestPhone = invoice.Order.GuestPhone ?? invoice.Order.Phone ?? "-";
+                                    var guestAddr = invoice.Order.GuestAddress ?? invoice.Order.Address ?? "-";
+                                    col2.Item().Text($"Name: {guestName}");
+                                    col2.Item().Text($"Phone: {guestPhone}");
+                                    col2.Item().Text($"Address: {guestAddr}");
+                                }
+                                else
+                                {
+                                    col2.Item().Text("Guest Order");
+                                }
+                            });
                         });
+
 
                         col.Item().PaddingTop(1, Unit.Centimetre).LineHorizontal(1);
 

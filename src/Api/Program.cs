@@ -94,7 +94,8 @@ builder.Services.AddStackExchangeRedisCache(options =>
 });
 
 // ==================== DI ====================
-
+builder.Services.AddSignalR();
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
 builder.Services.AddScoped<IFileStorageService, CloudinaryFileStorageService>();
