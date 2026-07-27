@@ -8,11 +8,14 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using System.Threading.RateLimiting;
 using Serilog;
+using QuestPDF.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
 Log.Logger = new LoggerConfiguration().WriteTo.Console().CreateLogger();
 builder.Host.UseSerilog();
+
+QuestPDF.Settings.License = LicenseType.Community;
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -21,9 +24,10 @@ builder.Services.AddStackExchangeRedisCache(options => {
     options.Configuration = builder.Configuration.GetConnectionString("RedisConnection") ?? "localhost:6379";
 });
 
-builder.Services.AddScoped<Application.Common.Interfaces.IUnitOfWork, Infrastructure.Repositories.UnitOfWork>();
-
+builder.Services.AddScoped<IUnitOfWork, Infrastructure.Repositories.UnitOfWork>();
 builder.Services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
+builder.Services.AddScoped<IFileStorageService, Infrastructure.Services.CloudinaryFileStorageService>();
+builder.Services.AddScoped<IInvoicePdfGenerator, Infrastructure.Services.QuestPdfInvoiceGenerator>();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -36,6 +40,20 @@ builder.Services.AddRateLimiter(options => {
         RateLimitPartition.GetFixedWindowLimiter(
             ctx.Connection.RemoteIpAddress?.ToString() ?? "loxx-client",
             _ => new FixedWindowRateLimiterOptions { PermitLimit = 200, Window = TimeSpan.FromMinutes(1) }));
+});
+
+// CORS - Read allowed origins from configuration
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? Array.Empty<string>();
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("LoxxKingCorsPolicy", policy =>
+    {
+        policy.WithOrigins(allowedOrigins)
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
 });
 
 var jwtSecret = builder.Configuration["Jwt:Secret"] ?? "LOXX_KING_SUPER_SECRET_KEY_32BYTES_LONG_MINIMUM";
@@ -70,10 +88,13 @@ if (app.Environment.IsDevelopment())
 
 app.UseResponseCompression();
 app.UseHttpsRedirection();
+
+// CORS middleware - BEFORE Authentication/Authorization
+app.UseCors("LoxxKingCorsPolicy");
+
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
-builder.Services.AddScoped<IFileStorageService, Infrastructure.Services.CloudinaryFileStorageService>();
