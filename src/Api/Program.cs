@@ -74,6 +74,13 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<Infrastructure.Persistence.AppDbContext>();
+    await dbContext.Database.MigrateAsync();
+    await Infrastructure.Persistence.DbSeeder.SeedCountriesAsync(dbContext);
+}
+
 app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
 
 if (app.Environment.IsDevelopment())
