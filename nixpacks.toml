@@ -1,8 +1,0 @@
-[phases.setup]
-nixPkgs = ["dotnet-sdk_10"]
-
-[phases.install]
-cmds = ["dotnet publish src/Api/Api.csproj -c Release -o /app/publish"]
-
-[phases.start]
-cmd = "dotnet /app/publish/Api.dll"
