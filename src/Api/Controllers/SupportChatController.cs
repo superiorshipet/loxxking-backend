@@ -27,21 +27,15 @@ public class SupportChatController : ControllerBase
 
         var messages = await _unitOfWork.SupportMessages.Query()
             .Where(sm => sm.ConversationId == conversationId)
-            .Include(sm => sm.Sender)
             .OrderBy(sm => sm.CreatedAt)
             .Select(sm => new
             {
                 sm.Id,
+                sm.SenderName,
+                sm.SenderRole,
                 sm.Message,
-                sm.CreatedAt,
                 sm.IsRead,
-                Sender = new
-                {
-                    sm.Sender.Id,
-                    sm.Sender.Name,
-                    sm.Sender.Role
-                },
-                sm.RecipientId
+                sm.CreatedAt
             })
             .ToListAsync(cancellationToken);
 
@@ -58,7 +52,7 @@ public class SupportChatController : ControllerBase
         if (!isStaff && firstMessage.SenderId != userId)
             return Forbid();
 
-        // Mark messages as read
+        // Mark messages as read for staff
         if (isStaff)
         {
             var unreadMessages = await _unitOfWork.SupportMessages.Query()
@@ -80,14 +74,18 @@ public class SupportChatController : ControllerBase
     public async Task<IActionResult> SendMessage([FromBody] SendMessageRequest request, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
-        var isStaff = User.IsInRole("Admin") || User.IsInRole("StoreManager");
+        var user = await _unitOfWork.Users.GetByIdAsync(userId, cancellationToken);
+        
+        if (user is null)
+            return Unauthorized();
 
         var message = new SupportMessage
         {
             Id = Guid.NewGuid(),
             ConversationId = request.ConversationId,
+            SenderName = user.Name,
+            SenderRole = user.Role.ToString(),
             SenderId = userId,
-            RecipientId = request.RecipientId,
             Message = request.Message,
             AttachmentUrl = request.AttachmentUrl,
             IsRead = false,
@@ -97,19 +95,10 @@ public class SupportChatController : ControllerBase
         await _unitOfWork.SupportMessages.AddAsync(message, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Send notification to recipient
-        if (request.RecipientId.HasValue)
+        // Send notification to staff (if sender is customer)
+        if (user.Role == UserRole.Customer)
         {
-            await _unitOfWork.Notifications.AddAsync(new Notification
-            {
-                Id = Guid.NewGuid(),
-                UserId = request.RecipientId.Value,
-                Type = NotificationType.ChatMessage,
-                Message = $"New message from {User.Identity?.Name ?? "User"}",
-                RelatedEntityId = request.ConversationId,
-                CreatedAt = DateTime.UtcNow
-            }, cancellationToken);
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            await NotifyStaffAsync($"New message from {user.Name}", cancellationToken);
         }
 
         return Ok(new { message.Id, message.Message, message.CreatedAt });
@@ -119,12 +108,15 @@ public class SupportChatController : ControllerBase
     public async Task<IActionResult> CreateConversation([FromBody] CreateConversationRequest request, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
+        var user = await _unitOfWork.Users.GetByIdAsync(userId, cancellationToken);
+        
+        if (user is null)
+            return Unauthorized();
 
         // Check if conversation already exists between these users
         var existing = await _unitOfWork.SupportMessages.Query()
             .FirstOrDefaultAsync(sm =>
-                (sm.SenderId == userId && sm.RecipientId == request.RecipientId) ||
-                (sm.SenderId == request.RecipientId && sm.RecipientId == userId),
+                sm.SenderId == userId,
                 cancellationToken);
 
         if (existing is not null)
@@ -139,8 +131,9 @@ public class SupportChatController : ControllerBase
         {
             Id = Guid.NewGuid(),
             ConversationId = conversationId,
+            SenderName = user.Name,
+            SenderRole = user.Role.ToString(),
             SenderId = userId,
-            RecipientId = request.RecipientId,
             Message = request.InitialMessage ?? "Hello!",
             IsRead = false,
             CreatedAt = DateTime.UtcNow
@@ -149,26 +142,52 @@ public class SupportChatController : ControllerBase
         await _unitOfWork.SupportMessages.AddAsync(message, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
+        // Notify staff
+        await NotifyStaffAsync($"New conversation started by {user.Name}", cancellationToken);
+
         return Ok(new { conversationId });
     }
 
-    public class SendMessageRequest
-    {
-        public Guid ConversationId { get; set; }
-        public Guid? RecipientId { get; set; }
-        public string Message { get; set; } = string.Empty;
-        public string? AttachmentUrl { get; set; }
-    }
+    // ============================================================
+    // HELPERS
+    // ============================================================
 
-    public class CreateConversationRequest
+    private async Task NotifyStaffAsync(string message, CancellationToken cancellationToken)
     {
-        public Guid RecipientId { get; set; }
-        public string? InitialMessage { get; set; }
+        var staff = await _unitOfWork.Users.Query()
+            .Where(u => u.Role == UserRole.Admin || u.Role == UserRole.StoreManager || u.Role == UserRole.SalesEmployee)
+            .Select(u => u.Id)
+            .ToListAsync(cancellationToken);
+
+        foreach (var staffId in staff)
+        {
+            await _unitOfWork.Notifications.AddAsync(new Notification
+            {
+                Id = Guid.NewGuid(),
+                UserId = staffId,
+                Type = NotificationType.SupportMessage,
+                Message = message,
+                CreatedAt = DateTime.UtcNow
+            }, cancellationToken);
+        }
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
     private Guid GetCurrentUserId()
     {
         var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("nameid")?.Value;
         return userId is not null && Guid.TryParse(userId, out var id) ? id : Guid.Empty;
+    }
+
+    public class SendMessageRequest
+    {
+        public Guid ConversationId { get; set; }
+        public string Message { get; set; } = string.Empty;
+        public string? AttachmentUrl { get; set; }
+    }
+
+    public class CreateConversationRequest
+    {
+        public string? InitialMessage { get; set; }
     }
 }
