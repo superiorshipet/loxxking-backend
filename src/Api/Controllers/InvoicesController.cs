@@ -117,3 +117,30 @@ public class InvoicesController : ControllerBase
         return userId is not null && Guid.TryParse(userId, out var id) ? id : Guid.Empty;
     }
 }
+
+    [HttpGet("{id}/pdf")]
+    [Authorize]
+    public async Task<IActionResult> GetPdf(Guid id, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        var isStaff = User.IsInRole("Admin") || User.IsInRole("StoreManager");
+
+        var invoice = await _unitOfWork.Invoices.Query()
+            .Include(i => i.Order)
+                .ThenInclude(o => o.Customer)
+            .Include(i => i.Order)
+                .ThenInclude(o => o.OrderItems)
+                    .ThenInclude(oi => oi.Product)
+            .FirstOrDefaultAsync(i => i.Id == id, cancellationToken);
+
+        if (invoice is null)
+            return NotFound();
+
+        if (!isStaff && invoice.Order.CustomerId != userId)
+            return Forbid();
+
+        var pdfGenerator = HttpContext.RequestServices.GetRequiredService<IInvoicePdfGenerator>();
+        var pdfBytes = await pdfGenerator.GenerateAsync(invoice, cancellationToken);
+
+        return File(pdfBytes, "application/pdf", $"{invoice.InvoiceNumber}.pdf");
+    }

@@ -76,3 +76,4 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
+builder.Services.AddScoped<IFileStorageService, Infrastructure.Services.CloudinaryFileStorageService>();
