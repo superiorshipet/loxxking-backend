@@ -42,22 +42,14 @@ public class QuestPdfInvoiceGenerator : IInvoicePdfGenerator
                                 col2.Item().Text($"Order ID: {invoice.OrderId}");
                             });
 
-                            if (invoice.Order != null)
+                            if (invoice.Order?.Customer != null)
                             {
                                 row.RelativeItem().Column(col2 =>
                                 {
                                     col2.Item().Text("Customer Information:");
-                                    // Use GuestName if no User, otherwise User.Name
-                                    if (invoice.Order.User != null)
-                                    {
-                                        col2.Item().Text($"Name: {invoice.Order.User.Name}");
-                                        col2.Item().Text($"Email: {invoice.Order.User.Email}");
-                                    }
-                                    else
-                                    {
-                                        col2.Item().Text($"Name: {invoice.Order.GuestName}");
-                                        col2.Item().Text($"Phone: {invoice.Order.GuestPhone}");
-                                    }
+                                    col2.Item().Text($"Name: {invoice.Order.Customer.Name}");
+                                    col2.Item().Text($"Email: {invoice.Order.Customer.Email}");
+                                    col2.Item().Text($"Phone: {invoice.Order.Customer.Phone}");
                                 });
                             }
                         });
