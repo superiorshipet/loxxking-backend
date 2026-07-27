@@ -31,5 +31,18 @@ public class AppDbContext : DbContext {
         modelBuilder.Entity<Inventory>().HasIndex(i => new { i.ProductId, i.CountryId }).IsUnique();
         modelBuilder.Entity<Review>().HasIndex(r => r.ProductId);
         modelBuilder.Entity<Notification>().HasIndex(n => n.UserId);
+        modelBuilder.Entity<BankTransfer>().HasIndex(bt => bt.OrderId);
+        modelBuilder.Entity<Invoice>().HasIndex(i => i.OrderId).IsUnique();
+
+        // SupportMessage عندها علاقتين مع User (Sender و Recipient اختياري)
+        // لازم نوضح لـ EF Core كل علاقة تتربط بأنهي FK عشان ميحصلش تعارض تلقائي
+        modelBuilder.Entity<SupportMessage>()
+            .HasOne(sm => sm.Sender)
+            .WithMany()
+            .HasForeignKey(sm => sm.SenderId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<SupportMessage>()
+            .HasIndex(sm => sm.ConversationId);
     }
 }
