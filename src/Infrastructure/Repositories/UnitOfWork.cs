@@ -27,6 +27,7 @@ public class UnitOfWork : IUnitOfWork
         SiteVisits = new Repository<SiteVisit>(dbContext);
         Offers = new Repository<Offer>(dbContext);
         BankTransfers = new Repository<BankTransfer>(dbContext);
+        SupportConversations = new Repository<SupportConversation>(dbContext);
     }
 
     public IRepository<User> Users { get; }
@@ -45,6 +46,7 @@ public class UnitOfWork : IUnitOfWork
     public IRepository<SiteVisit> SiteVisits { get; }
     public IRepository<Offer> Offers { get; }
     public IRepository<BankTransfer> BankTransfers { get; }
+    public IRepository<SupportConversation> SupportConversations { get; }
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) =>
         await _dbContext.SaveChangesAsync(cancellationToken);
