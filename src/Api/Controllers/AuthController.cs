@@ -143,32 +143,6 @@ public class AuthController : ControllerBase
 
         return await IssueTokensAsync(user, cancellationToken);
     }
-
-    [Authorize]
-    [HttpGet("me")]
-    public async Task<IActionResult> Me(CancellationToken cancellationToken)
-    {
-        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("nameid")?.Value;
-        if (userId is null || !Guid.TryParse(userId, out var id))
-            return Unauthorized();
-
-        var user = await _unitOfWork.Users.Query()
-            .Include(u => u.Country)
-            .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
-
-        if (user is null)
-            return NotFound();
-
-        return Ok(new
-        {
-            user.Id,
-            user.Name,
-            user.Email,
-            Role = user.Role.ToString(),
-            Country = user.Country?.Name
-        });
-    }
-
     [Authorize]
     [HttpPost("logout")]
     public async Task<IActionResult> Logout(CancellationToken cancellationToken)
