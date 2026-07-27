@@ -1,0 +1,19 @@
+namespace Domain.Entities;
+using Domain.Enums;
+
+public class Order {
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid CustomerId { get; set; }
+    public User Customer { get; set; } = default!;
+    public Guid CountryId { get; set; }
+    public Country Country { get; set; } = default!;
+    public OrderStatus Status { get; set; } = OrderStatus.NewOrder;
+    public PaymentMethod PaymentMethod { get; set; }
+    public string? ShipmentCode { get; set; }
+    public string Address { get; set; } = default!;
+    public string Phone { get; set; } = default!;
+    public string? Notes { get; set; }
+    public decimal TotalAmount { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public ICollection<OrderItem> OrderItems { get; set; } = new List<OrderItem>();
+}

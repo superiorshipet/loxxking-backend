@@ -1,93 +1,218 @@
-namespace Api.Controllers;
-
 using Application.Common.Interfaces;
 using Domain.Entities;
 using Domain.Enums;
+using Google.Apis.Auth;
 using Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
+namespace Api.Controllers;
+
 [ApiController]
 [Route("api/auth")]
 public class AuthController : ControllerBase
 {
-    private readonly AppDbContext _context;
+    private readonly AppDbContext _dbContext;
     private readonly IJwtTokenGenerator _jwtTokenGenerator;
 
-    public AuthController(AppDbContext context, IJwtTokenGenerator jwtTokenGenerator)
+    public AuthController(AppDbContext dbContext, IJwtTokenGenerator jwtTokenGenerator)
     {
-        _context = context;
+        _dbContext = dbContext;
         _jwtTokenGenerator = jwtTokenGenerator;
     }
 
-    public record RegisterRequest(string Name, string Email, string Phone, string Password, string CountryName);
+    public record RegisterRequest(string Name, string Email, string Phone, string Password, Guid CountryId);
     public record LoginRequest(string Email, string Password);
+    public record RefreshRequest(string RefreshToken);
+    public record GoogleLoginRequest(string IdToken);
 
+    // ------------------------------------------------------------
+    // POST /api/auth/register
+    // ------------------------------------------------------------
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request, CancellationToken cancellationToken)
     {
-        if (await _context.Users.AnyAsync(u => u.Email == request.Email, cancellationToken))
-        {
-            return BadRequest(new { message = "Email is already registered." });
-        }
+        var emailExists = await _dbContext.Users.AnyAsync(u => u.Email == request.Email, cancellationToken);
+        if (emailExists)
+            return Conflict(new { message = "Email already registered." });
 
-        // Find country by name, or create it automatically if it doesn't exist
-        var country = await _context.Countries
-            .FirstOrDefaultAsync(c => c.Name.ToLower() == request.CountryName.ToLower(), cancellationToken);
-
-        if (country == null)
-        {
-            country = new Country
-            {
-                Id = Guid.NewGuid(),
-                Name = request.CountryName,
-                Currency = "USD", // Default fallback currency
-                DefaultLanguage = "en"
-            };
-            _context.Countries.Add(country);
-            await _context.SaveChangesAsync(cancellationToken);
-        }
+        var countryExists = await _dbContext.Countries.AnyAsync(c => c.Id == request.CountryId, cancellationToken);
+        if (!countryExists)
+            return BadRequest(new { message = "Invalid country." });
 
         var user = new User
         {
+            Id = Guid.NewGuid(),
             Name = request.Name,
             Email = request.Email,
             Phone = request.Phone,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
             Role = UserRole.Customer,
-            CountryId = country.Id
+            CountryId = request.CountryId,
+            CreatedAt = DateTime.UtcNow
         };
 
-        _context.Users.Add(user);
-        await _context.SaveChangesAsync(cancellationToken);
+        _dbContext.Users.Add(user);
+        await _dbContext.SaveChangesAsync(cancellationToken);
 
-        var accessToken = _jwtTokenGenerator.GenerateAccessToken(user);
-        var refreshToken = _jwtTokenGenerator.GenerateRefreshToken();
-
-        return Ok(new
-        {
-            message = "Registration successful.",
-            accessToken,
-            refreshToken,
-            user = new { user.Id, user.Name, user.Email, Role = user.Role.ToString(), Country = country.Name }
-        });
+        return await IssueTokensAsync(user, cancellationToken);
     }
 
+    // ------------------------------------------------------------
+    // POST /api/auth/login
+    // ------------------------------------------------------------
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken cancellationToken)
     {
-        var user = await _context.Users
+        var user = await _dbContext.Users
             .Include(u => u.Country)
             .FirstOrDefaultAsync(u => u.Email == request.Email, cancellationToken);
 
-        if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
-        {
+        if (user is null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
             return Unauthorized(new { message = "Invalid email or password." });
+
+        return await IssueTokensAsync(user, cancellationToken);
+    }
+
+    // ------------------------------------------------------------
+    // POST /api/auth/google-login
+    // ------------------------------------------------------------
+    [HttpPost("google-login")]
+    public async Task<IActionResult> GoogleLogin([FromBody] GoogleLoginRequest request, CancellationToken cancellationToken)
+    {
+        GoogleJsonWebSignature.Payload payload;
+        try
+        {
+            payload = await GoogleJsonWebSignature.ValidateAsync(request.IdToken);
+        }
+        catch (Exception)
+        {
+            return BadRequest(new { message = "Invalid Google token." });
         }
 
+        var user = await _dbContext.Users
+            .Include(u => u.Country)
+            .FirstOrDefaultAsync(u => u.Email == payload.Email, cancellationToken);
+
+        if (user is null)
+        {
+            var defaultCountry = await _dbContext.Countries.FirstOrDefaultAsync(cancellationToken);
+            if (defaultCountry is null)
+                return StatusCode(500, new { message = "No default country configured in the system." });
+
+            user = new User
+            {
+                Id = Guid.NewGuid(),
+                Name = payload.Name ?? "Google User",
+                Email = payload.Email,
+                Phone = string.Empty,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(Guid.NewGuid().ToString()),
+                Role = UserRole.Customer,
+                CountryId = defaultCountry.Id,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            _dbContext.Users.Add(user);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            user.Country = defaultCountry;
+        }
+
+        return await IssueTokensAsync(user, cancellationToken);
+    }
+
+    // ------------------------------------------------------------
+    // POST /api/auth/refresh
+    // ------------------------------------------------------------
+    [HttpPost("refresh")]
+    public async Task<IActionResult> Refresh([FromBody] RefreshRequest request, CancellationToken cancellationToken)
+    {
+        var incomingHash = BCrypt.Net.BCrypt.HashPassword(request.RefreshToken);
+
+        var user = await _dbContext.Users
+            .Include(u => u.Country)
+            .FirstOrDefaultAsync(u =>
+                u.RefreshTokenExpiresAt != null &&
+                u.RefreshTokenExpiresAt > DateTime.UtcNow,
+                cancellationToken);
+
+        // نبحث يدويًا لأن BCrypt hash مختلف كل مرة، فمينفعش تتفلتر في الـ query
+        var allCandidates = await _dbContext.Users
+            .Where(u => u.RefreshTokenHash != null && u.RefreshTokenExpiresAt > DateTime.UtcNow)
+            .ToListAsync(cancellationToken);
+
+        user = allCandidates.FirstOrDefault(u =>
+            BCrypt.Net.BCrypt.Verify(request.RefreshToken, u.RefreshTokenHash));
+
+        if (user is null)
+            return Unauthorized(new { message = "Invalid or expired refresh token." });
+
+        await _dbContext.Entry(user).Reference(u => u.Country).LoadAsync(cancellationToken);
+
+        return await IssueTokensAsync(user, cancellationToken);
+    }
+
+    // ------------------------------------------------------------
+    // GET /api/auth/me
+    // ------------------------------------------------------------
+    [Authorize]
+    [HttpGet("me")]
+    public async Task<IActionResult> Me(CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("nameid")?.Value;
+        if (userId is null || !Guid.TryParse(userId, out var id))
+            return Unauthorized();
+
+        var user = await _dbContext.Users
+            .Include(u => u.Country)
+            .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
+
+        if (user is null)
+            return NotFound();
+
+        return Ok(new
+        {
+            user.Id,
+            user.Name,
+            user.Email,
+            Role = user.Role.ToString(),
+            Country = user.Country?.Name
+        });
+    }
+
+    // ------------------------------------------------------------
+    // POST /api/auth/logout
+    // ------------------------------------------------------------
+    [Authorize]
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout(CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("nameid")?.Value;
+        if (userId is null || !Guid.TryParse(userId, out var id))
+            return Unauthorized();
+
+        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
+        if (user is not null)
+        {
+            user.RefreshTokenHash = null;
+            user.RefreshTokenExpiresAt = null;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        return NoContent();
+    }
+
+    // ------------------------------------------------------------
+    // دالة مساعدة: تولد access + refresh token، وتخزن الـ refresh مشفّر
+    // ------------------------------------------------------------
+    private async Task<IActionResult> IssueTokensAsync(User user, CancellationToken cancellationToken)
+    {
         var accessToken = _jwtTokenGenerator.GenerateAccessToken(user);
         var refreshToken = _jwtTokenGenerator.GenerateRefreshToken();
+
+        user.RefreshTokenHash = BCrypt.Net.BCrypt.HashPassword(refreshToken);
+        user.RefreshTokenExpiresAt = DateTime.UtcNow.AddDays(7);
+        await _dbContext.SaveChangesAsync(cancellationToken);
 
         return Ok(new
         {
@@ -102,23 +227,5 @@ public class AuthController : ControllerBase
                 Country = user.Country?.Name
             }
         });
-    }
-
-    [HttpGet("me")]
-    [Authorize]
-    public IActionResult GetCurrentUser()
-    {
-        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        var email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
-        var role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
-
-        return Ok(new { userId, email, role });
-    }
-
-    [HttpGet("admin-dashboard")]
-    [Authorize(Roles = "Admin")]
-    public IActionResult AdminOnlyDashboard()
-    {
-        return Ok(new { message = "Welcome to the Admin restricted dashboard!" });
     }
 }
