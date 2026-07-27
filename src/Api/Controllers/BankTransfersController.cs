@@ -39,7 +39,7 @@ public class BankTransfersController : ControllerBase
         var userId = GetCurrentUserId();
 
         var order = await _unitOfWork.Orders.Query()
-            .FirstOrDefaultAsync(o => o.Id == orderId && o.CustomerId == userId, cancellationToken);
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.UserId == userId, cancellationToken);
 
         if (order is null)
             return NotFound(new { message = "Order not found." });
@@ -103,7 +103,7 @@ public class BankTransfersController : ControllerBase
         if (transfer is null)
             return NotFound();
 
-        if (!isStaff && transfer.Order.CustomerId != userId)
+        if (!isStaff && transfer.Order.UserId != userId)
             return Forbid();
 
         return Ok(new
@@ -124,14 +124,14 @@ public class BankTransfersController : ControllerBase
     {
         var pending = await _unitOfWork.BankTransfers.Query()
             .Include(bt => bt.Order)
-                .ThenInclude(o => o.Customer)
+                .ThenInclude(o => o.User)
             .Where(bt => bt.Status == BankTransferStatus.PendingReview)
             .OrderBy(bt => bt.SubmittedAt)
             .Select(bt => new
             {
                 bt.Id,
                 bt.OrderId,
-                CustomerName = bt.Order.Customer.Name,
+                CustomerName = bt.Order.User != null ? bt.Order.User.Name : bt.Order.GuestName,
                 bt.ProofImageUrl,
                 bt.SubmittedAt
             })
@@ -164,18 +164,22 @@ public class BankTransfersController : ControllerBase
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        await _unitOfWork.Notifications.AddAsync(new Notification
+        // Send notification to the order owner (user or guest)
+        if (transfer.Order.UserId.HasValue)
         {
-            Id = Guid.NewGuid(),
-            UserId = transfer.Order.CustomerId,
-            Type = NotificationType.BankTransferReviewed,
-            Message = request.Approved
-                ? "Your bank transfer was approved. Your order is now confirmed."
-                : $"Your bank transfer was rejected: {request.RejectionReason}",
-            RelatedEntityId = transfer.OrderId,
-            CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+            await _unitOfWork.Notifications.AddAsync(new Notification
+            {
+                Id = Guid.NewGuid(),
+                UserId = transfer.Order.UserId.Value,
+                Type = NotificationType.BankTransferReviewed,
+                Message = request.Approved
+                    ? "Your bank transfer was approved. Your order is now confirmed."
+                    : $"Your bank transfer was rejected: {request.RejectionReason}",
+                RelatedEntityId = transfer.OrderId,
+                CreatedAt = DateTime.UtcNow
+            }, cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
 
         return Ok(new { transfer.Id, transfer.Status });
     }
