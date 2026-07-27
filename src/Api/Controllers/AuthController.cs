@@ -138,34 +138,4 @@ public class AuthController : ControllerBase
 
         return Ok(response);
     }
-
-    [HttpGet("me")]
-    [Authorize]
-    public async Task<IActionResult> GetCurrentUser(CancellationToken cancellationToken)
-    {
-        var userId = GetCurrentUserId();
-        var user = await _unitOfWork.Users.Query()
-            .Include(u => u.Country)
-            .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
-
-        if (user is null)
-            return NotFound();
-
-        return Ok(new UserDto
-        {
-            Id = user.Id,
-            Name = user.Name,
-            Email = user.Email,
-            Phone = user.Phone,
-            Role = user.Role.ToString(),
-            Country = user.Country.Name,
-            CreatedAt = user.CreatedAt
-        });
-    }
-
-    private Guid GetCurrentUserId()
-    {
-        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("nameid")?.Value;
-        return userId is not null && Guid.TryParse(userId, out var id) ? id : Guid.Empty;
-    }
 }
