@@ -71,6 +71,7 @@ public class SupportChatController : ControllerBase
             SenderId = senderIdToStore,
             RecipientId = request.RecipientId,
             Message = request.Message,
+            GuestName = request.GuestName,
             IsRead = false,
             CreatedAt = DateTime.UtcNow
         };
@@ -135,14 +136,22 @@ public class SupportChatController : ControllerBase
             .GroupBy(sm => sm.ConversationId)
             .Select(g =>
             {
-                var lastMsg = g.OrderByDescending(sm => sm.CreatedAt).FirstOrDefault();
+                var msgs = g.OrderByDescending(sm => sm.CreatedAt).ToList();
+                var lastMsg = msgs.First();
+                // Best name: registered user name > GuestName on any message > "Customer"
+                var firstMsg = g.OrderBy(sm => sm.CreatedAt).First();
+                var displayName = lastMsg.Sender?.Name
+                    ?? g.Where(m => m.GuestName != null).Select(m => m.GuestName).FirstOrDefault()
+                    ?? "Customer";
                 return new
                 {
                     ConversationId = g.Key,
-                    LastMessage = lastMsg?.Message ?? "",
-                    LastMessageAt = g.Max(sm => sm.CreatedAt),
-                    SenderName = lastMsg?.Sender?.Name ?? "Customer",
-                    SenderRole = lastMsg?.Sender?.Role.ToString() ?? "Customer"
+                    LastMessage = lastMsg.Message,
+                    LastMessageAt = lastMsg.CreatedAt,
+                    SenderName = displayName,
+                    SenderRole = lastMsg.Sender?.Role.ToString() ?? "Guest",
+                    UnreadCount = g.Count(m => !m.IsRead && m.SenderId == null),
+                    MessageCount = g.Count()
                 };
             })
             .OrderByDescending(c => c.LastMessageAt)
@@ -158,6 +167,7 @@ public class SupportChatController : ControllerBase
         public Guid ConversationId { get; set; }
         public Guid? RecipientId { get; set; }
         public string Message { get; set; } = string.Empty;
+        public string? GuestName { get; set; }   // optional: guest's name shown to admin
     }
 
     public class CreateConversationRequest

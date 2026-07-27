@@ -1496,11 +1496,14 @@ async function loadOrders() {
                                     <div style="display:flex;gap:6px;">
                                         <button class="btn btn-xs btn-outline" onclick="downloadInvoicePdf('${oId}')" title="Download Backend PDF Invoice">📄 PDF Invoice</button>
                                         <select style="width:auto;padding:2px 6px;font-size:11px;" onchange="updateOrderStatus('${oId}', this.value)">
-                                            <option value="">Update Status...</option>
-                                            <option value="NewOrder">NewOrder</option>
-                                            <option value="Processing">Processing</option>
-                                            <option value="Completed">Completed</option>
-                                            <option value="Cancelled">Cancelled</option>
+                                            <option value="">-- Change Status --</option>
+                                            <option value="NewOrder">🆕 New Order</option>
+                                            <option value="PendingApproval">⏳ Pending Approval</option>
+                                            <option value="Prepared">📦 Prepared</option>
+                                            <option value="Shipping">🚚 Shipping</option>
+                                            <option value="Delivered">✅ Delivered</option>
+                                            <option value="Cancelled">❌ Cancelled</option>
+                                            <option value="Incomplete">⚠️ Incomplete</option>
                                         </select>
                                     </div>
                                 </td>

@@ -11,6 +11,7 @@ public class SupportMessage
     public string? AttachmentUrl { get; set; }
     public Guid? RelatedOrderId { get; set; }
     public Guid? RelatedReviewId { get; set; }
+    public string? GuestName { get; set; }      // name for guest/anonymous senders
     public bool IsRead { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
