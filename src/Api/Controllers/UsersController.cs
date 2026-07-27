@@ -1,3 +1,5 @@
+using Api.DTOs.Common;
+using Api.DTOs.Users;
 using Application.Common.Interfaces;
 using Domain.Entities;
 using Domain.Enums;
@@ -19,17 +21,6 @@ public class UsersController : ControllerBase
         _unitOfWork = unitOfWork;
     }
 
-    public record CreateStaffRequest(
-        string Name,
-        string Email,
-        string Phone,
-        string Password,
-        string CountryName
-    );
-
-    /// <summary>
-    /// Admin only - Create a Store Manager
-    /// </summary>
     [HttpPost("admin/create-manager")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> CreateStoreManager([FromBody] CreateStaffRequest request, CancellationToken cancellationToken)
@@ -37,9 +28,6 @@ public class UsersController : ControllerBase
         return await CreateStaff(request, UserRole.StoreManager, cancellationToken);
     }
 
-    /// <summary>
-    /// Admin or Store Manager - Create a Sales Employee
-    /// </summary>
     [HttpPost("staff/create-employee")]
     [Authorize(Roles = "Admin,StoreManager")]
     public async Task<IActionResult> CreateSalesEmployee([FromBody] CreateStaffRequest request, CancellationToken cancellationToken)
@@ -49,38 +37,31 @@ public class UsersController : ControllerBase
 
     private async Task<IActionResult> CreateStaff(CreateStaffRequest request, UserRole role, CancellationToken cancellationToken)
     {
-        // Validate email uniqueness
         var existingEmail = await _unitOfWork.Users.Query()
             .AnyAsync(u => u.Email.ToLower() == request.Email.ToLower(), cancellationToken);
         
         if (existingEmail)
             return BadRequest(new { message = "Email already registered." });
 
-        // Validate phone uniqueness
         var existingPhone = await _unitOfWork.Users.Query()
             .AnyAsync(u => u.Phone == request.Phone, cancellationToken);
         
         if (existingPhone)
             return BadRequest(new { message = "Phone number already registered." });
 
-        // Get country
         var country = await _unitOfWork.Countries.Query()
             .FirstOrDefaultAsync(c => c.Name.ToLower() == request.CountryName.ToLower(), cancellationToken);
 
         if (country is null)
             return BadRequest(new { message = $"Country '{request.CountryName}' not found." });
 
-        // Hash password
-        var hashedPassword = BCrypt.Net.BCrypt.HashPassword(request.Password);
-
-        // Create user
         var user = new User
         {
             Id = Guid.NewGuid(),
             Name = request.Name,
             Email = request.Email,
             Phone = request.Phone,
-            PasswordHash = hashedPassword,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
             CountryId = country.Id,
             Role = role,
             IsActive = true,
@@ -90,7 +71,6 @@ public class UsersController : ControllerBase
         await _unitOfWork.Users.AddAsync(user, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Send notification to the new user (optional)
         await _unitOfWork.Notifications.AddAsync(new Notification
         {
             Id = Guid.NewGuid(),
@@ -113,9 +93,6 @@ public class UsersController : ControllerBase
         });
     }
 
-    /// <summary>
-    /// Get all staff (Store Managers + Sales Employees) - Admin or Store Manager
-    /// </summary>
     [HttpGet("staff")]
     [Authorize(Roles = "Admin,StoreManager")]
     public async Task<IActionResult> GetStaff(
@@ -150,32 +127,31 @@ public class UsersController : ControllerBase
             .OrderByDescending(u => u.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(u => new
+            .Select(u => new StaffResponse
             {
-                u.Id,
-                u.Name,
-                u.Email,
-                u.Phone,
+                Id = u.Id,
+                Name = u.Name,
+                Email = u.Email,
+                Phone = u.Phone,
                 Role = u.Role.ToString(),
                 Country = u.Country.Name,
-                u.IsActive,
-                u.CreatedAt
+                IsActive = u.IsActive,
+                CreatedAt = u.CreatedAt
             })
             .ToListAsync(cancellationToken);
 
-        return Ok(new
+        var response = new PaginatedResponse<StaffResponse>
         {
-            data = staff,
-            totalCount,
-            page,
-            pageSize,
-            totalPages = (int)Math.Ceiling(totalCount / (double)pageSize)
-        });
+            Data = staff,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+            TotalPages = (int)Math.Ceiling(totalCount / (double)pageSize)
+        };
+
+        return Ok(response);
     }
 
-    /// <summary>
-    /// Admin or Store Manager - Toggle user active status (deactivate/reactivate)
-    /// </summary>
     [HttpPatch("staff/{id}/toggle-status")]
     [Authorize(Roles = "Admin,StoreManager")]
     public async Task<IActionResult> ToggleStaffStatus(Guid id, CancellationToken cancellationToken)
@@ -185,12 +161,10 @@ public class UsersController : ControllerBase
         if (user is null)
             return NotFound(new { message = "User not found." });
 
-        // Prevent deactivating self
         var currentUserId = GetCurrentUserId();
         if (user.Id == currentUserId)
             return BadRequest(new { message = "Cannot deactivate your own account." });
 
-        // Only allow toggling for StoreManager and SalesEmployee
         if (user.Role != UserRole.StoreManager && user.Role != UserRole.SalesEmployee)
             return BadRequest(new { message = "Can only toggle status for staff members." });
 
@@ -208,9 +182,6 @@ public class UsersController : ControllerBase
         });
     }
 
-    /// <summary>
-    /// Admin only - Delete a user
-    /// </summary>
     [HttpDelete("admin/{id}")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> DeleteUser(Guid id, CancellationToken cancellationToken)
@@ -220,12 +191,10 @@ public class UsersController : ControllerBase
         if (user is null)
             return NotFound(new { message = "User not found." });
 
-        // Prevent deleting self
         var currentUserId = GetCurrentUserId();
         if (user.Id == currentUserId)
             return BadRequest(new { message = "Cannot delete your own account." });
 
-        // Don't allow deleting other Admins
         if (user.Role == UserRole.Admin)
             return BadRequest(new { message = "Cannot delete another Admin." });
 
@@ -233,6 +202,107 @@ public class UsersController : ControllerBase
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return NoContent();
+    }
+
+    [HttpPost("change-password")]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        var user = await _unitOfWork.Users.GetByIdAsync(userId, cancellationToken);
+
+        if (user is null)
+            return NotFound(new { message = "User not found." });
+
+        if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.PasswordHash))
+            return BadRequest(new { message = "Current password is incorrect." });
+
+        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 6)
+            return BadRequest(new { message = "New password must be at least 6 characters long." });
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+        _unitOfWork.Users.Update(user);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        await _unitOfWork.Notifications.AddAsync(new Notification
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            Type = NotificationType.AccountUpdate,
+            Message = "Your password has been changed successfully.",
+            CreatedAt = DateTime.UtcNow
+        }, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { message = "Password changed successfully." });
+    }
+
+    [HttpPost("staff/reset-password")]
+    [Authorize(Roles = "Admin,StoreManager")]
+    public async Task<IActionResult> ResetStaffPassword([FromBody] ResetPasswordRequest request, CancellationToken cancellationToken)
+    {
+        var user = await _unitOfWork.Users.GetByIdAsync(request.UserId, cancellationToken);
+
+        if (user is null)
+            return NotFound(new { message = "User not found." });
+
+        if (user.Role != UserRole.StoreManager && user.Role != UserRole.SalesEmployee)
+            return BadRequest(new { message = "Can only reset password for staff members." });
+
+        var currentUserId = GetCurrentUserId();
+        if (user.Id == currentUserId)
+            return BadRequest(new { message = "Use 'change-password' endpoint to change your own password." });
+
+        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 6)
+            return BadRequest(new { message = "New password must be at least 6 characters long." });
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+        _unitOfWork.Users.Update(user);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        await _unitOfWork.Notifications.AddAsync(new Notification
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            Type = NotificationType.AccountUpdate,
+            Message = $"Your password has been reset by {User.Identity?.Name ?? "Admin"}.",
+            CreatedAt = DateTime.UtcNow
+        }, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { message = $"Password reset successfully for {user.Name}." });
+    }
+
+    [HttpPost("admin/change-password")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> AdminChangePassword([FromBody] AdminChangePasswordRequest request, CancellationToken cancellationToken)
+    {
+        var user = await _unitOfWork.Users.GetByIdAsync(request.UserId, cancellationToken);
+
+        if (user is null)
+            return NotFound(new { message = "User not found." });
+
+        var currentUserId = GetCurrentUserId();
+        if (user.Id == currentUserId)
+            return BadRequest(new { message = "Use 'change-password' endpoint to change your own password." });
+
+        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 6)
+            return BadRequest(new { message = "New password must be at least 6 characters long." });
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+        _unitOfWork.Users.Update(user);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        await _unitOfWork.Notifications.AddAsync(new Notification
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            Type = NotificationType.AccountUpdate,
+            Message = $"Your password has been changed by an Administrator.",
+            CreatedAt = DateTime.UtcNow
+        }, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { message = $"Password changed successfully for {user.Name}." });
     }
 
     private Guid GetCurrentUserId()
