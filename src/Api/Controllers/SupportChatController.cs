@@ -4,12 +4,12 @@ using Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace Api.Controllers;
 
 [ApiController]
 [Route("api/support-chat")]
-[Authorize]
 public class SupportChatController : ControllerBase
 {
     private readonly IUnitOfWork _unitOfWork;
@@ -19,122 +19,57 @@ public class SupportChatController : ControllerBase
         _unitOfWork = unitOfWork;
     }
 
+    // ─── Get all messages in a conversation ─────────────────────────────────
     [HttpGet("messages/{conversationId}")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetMessages(Guid conversationId, CancellationToken cancellationToken)
     {
-        var userId = GetCurrentUserId();
-        var isStaff = User.IsInRole("Admin") || User.IsInRole("StoreManager");
-
         var messages = await _unitOfWork.SupportMessages.Query()
             .Where(sm => sm.ConversationId == conversationId)
+            .Include(sm => sm.Sender)
             .OrderBy(sm => sm.CreatedAt)
             .Select(sm => new
             {
                 sm.Id,
-                sm.SenderName,
-                sm.SenderRole,
+                sm.ConversationId,
                 sm.Message,
+                sm.CreatedAt,
                 sm.IsRead,
-                sm.CreatedAt
+                Sender = sm.Sender != null
+                    ? new { Id = sm.Sender.Id, Name = sm.Sender.Name, Role = sm.Sender.Role.ToString() }
+                    : new { Id = sm.SenderId, Name = "Customer", Role = "Customer" },
+                sm.RecipientId
             })
             .ToListAsync(cancellationToken);
-
-        if (!messages.Any())
-            return NotFound(new { message = "No messages found for this conversation." });
-
-        // Check if user has access to this conversation
-        var firstMessage = await _unitOfWork.SupportMessages.Query()
-            .FirstOrDefaultAsync(sm => sm.ConversationId == conversationId, cancellationToken);
-
-        if (firstMessage is null)
-            return NotFound();
-
-        if (!isStaff && firstMessage.SenderId != userId)
-            return Forbid();
-
-        // Mark messages as read for staff
-        if (isStaff)
-        {
-            var unreadMessages = await _unitOfWork.SupportMessages.Query()
-                .Where(sm => sm.ConversationId == conversationId && !sm.IsRead)
-                .ToListAsync(cancellationToken);
-
-            foreach (var msg in unreadMessages)
-            {
-                msg.IsRead = true;
-                _unitOfWork.SupportMessages.Update(msg);
-            }
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-        }
 
         return Ok(messages);
     }
 
+    // ─── Send a message (guest or authenticated) ─────────────────────────────
     [HttpPost("send")]
+    [AllowAnonymous]
     public async Task<IActionResult> SendMessage([FromBody] SendMessageRequest request, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(request.Message))
+            return BadRequest(new { message = "Message content cannot be empty." });
+
         var userId = GetCurrentUserId();
-        var user = await _unitOfWork.Users.GetByIdAsync(userId, cancellationToken);
-        
-        if (user is null)
-            return Unauthorized();
 
-        var message = new SupportMessage
-        {
-            Id = Guid.NewGuid(),
-            ConversationId = request.ConversationId,
-            SenderName = user.Name,
-            SenderRole = user.Role.ToString(),
-            SenderId = userId,
-            Message = request.Message,
-            AttachmentUrl = request.AttachmentUrl,
-            IsRead = false,
-            CreatedAt = DateTime.UtcNow
-        };
+        // Guests have no user ID — store Guid.Empty; admin panel identifies them as "Customer"
+        var senderIdToStore = userId != Guid.Empty ? userId : Guid.Empty;
 
-        await _unitOfWork.SupportMessages.AddAsync(message, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        // Treat zero/missing GUID as "start a new conversation"
+        var conversationId = (request.ConversationId == Guid.Empty || request.ConversationId == default)
+            ? Guid.NewGuid()
+            : request.ConversationId;
 
-        // Send notification to staff (if sender is customer)
-        if (user.Role == UserRole.Customer)
-        {
-            await NotifyStaffAsync($"New message from {user.Name}", cancellationToken);
-        }
-
-        return Ok(new { message.Id, message.Message, message.CreatedAt });
-    }
-
-    [HttpPost("conversation")]
-    public async Task<IActionResult> CreateConversation([FromBody] CreateConversationRequest request, CancellationToken cancellationToken)
-    {
-        var userId = GetCurrentUserId();
-        var user = await _unitOfWork.Users.GetByIdAsync(userId, cancellationToken);
-        
-        if (user is null)
-            return Unauthorized();
-
-        // Check if conversation already exists between these users
-        var existing = await _unitOfWork.SupportMessages.Query()
-            .FirstOrDefaultAsync(sm =>
-                sm.SenderId == userId,
-                cancellationToken);
-
-        if (existing is not null)
-        {
-            return Ok(new { conversationId = existing.ConversationId });
-        }
-
-        var conversationId = Guid.NewGuid();
-
-        // Create first message
         var message = new SupportMessage
         {
             Id = Guid.NewGuid(),
             ConversationId = conversationId,
-            SenderName = user.Name,
-            SenderRole = user.Role.ToString(),
-            SenderId = userId,
-            Message = request.InitialMessage ?? "Hello!",
+            SenderId = senderIdToStore,
+            RecipientId = request.RecipientId,
+            Message = request.Message,
             IsRead = false,
             CreatedAt = DateTime.UtcNow
         };
@@ -142,52 +77,99 @@ public class SupportChatController : ControllerBase
         await _unitOfWork.SupportMessages.AddAsync(message, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Notify staff
-        await NotifyStaffAsync($"New conversation started by {user.Name}", cancellationToken);
+        // Always return the real conversationId so the frontend can persist it
+        return Ok(new
+        {
+            message.Id,
+            conversationId = message.ConversationId,
+            message.Message,
+            message.CreatedAt
+        });
+    }
+
+    // ─── Create a new conversation (legacy helper) ───────────────────────────
+    [HttpPost("conversation")]
+    [AllowAnonymous]
+    public async Task<IActionResult> CreateConversation([FromBody] CreateConversationRequest request, CancellationToken cancellationToken)
+    {
+        var conversationId = Guid.NewGuid();
+        var userId = GetCurrentUserId();
+
+        var message = new SupportMessage
+        {
+            Id = Guid.NewGuid(),
+            ConversationId = conversationId,
+            SenderId = userId,
+            RecipientId = request.RecipientId,
+            Message = request.InitialMessage ?? "Hello support!",
+            IsRead = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _unitOfWork.SupportMessages.AddAsync(message, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return Ok(new { conversationId });
     }
 
-    // ============================================================
-    // HELPERS
-    // ============================================================
-
-    private async Task NotifyStaffAsync(string message, CancellationToken cancellationToken)
+    // ─── List all conversations (admin sees all; others see their own) ────────
+    [HttpGet("conversations")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetConversations(CancellationToken cancellationToken)
     {
-        var staff = await _unitOfWork.Users.Query()
-            .Where(u => u.Role == UserRole.Admin || u.Role == UserRole.StoreManager || u.Role == UserRole.SalesEmployee)
-            .Select(u => u.Id)
-            .ToListAsync(cancellationToken);
+        var userId = GetCurrentUserId();
+        var isStaff = User.IsInRole("Admin") || User.IsInRole("StoreManager") || User.IsInRole("SalesEmployee");
 
-        foreach (var staffId in staff)
-        {
-            await _unitOfWork.Notifications.AddAsync(new Notification
+        var query = _unitOfWork.SupportMessages.Query()
+            .Include(sm => sm.Sender)
+            .AsQueryable();
+
+        // Non-staff, authenticated users: only their own conversations
+        if (!isStaff && userId != Guid.Empty)
+            query = query.Where(sm => sm.SenderId == userId || sm.RecipientId == userId);
+
+        var rawMessages = await query.ToListAsync(cancellationToken);
+
+        var conversations = rawMessages
+            .GroupBy(sm => sm.ConversationId)
+            .Select(g =>
             {
-                Id = Guid.NewGuid(),
-                UserId = staffId,
-                Type = NotificationType.SupportMessage,
-                Message = message,
-                CreatedAt = DateTime.UtcNow
-            }, cancellationToken);
-        }
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+                var lastMsg = g.OrderByDescending(sm => sm.CreatedAt).FirstOrDefault();
+                return new
+                {
+                    ConversationId = g.Key,
+                    LastMessage = lastMsg?.Message ?? "",
+                    LastMessageAt = g.Max(sm => sm.CreatedAt),
+                    SenderName = lastMsg?.Sender?.Name ?? "Customer",
+                    SenderRole = lastMsg?.Sender?.Role.ToString() ?? "Customer"
+                };
+            })
+            .OrderByDescending(c => c.LastMessageAt)
+            .ToList();
+
+        return Ok(conversations);
     }
 
-    private Guid GetCurrentUserId()
-    {
-        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("nameid")?.Value;
-        return userId is not null && Guid.TryParse(userId, out var id) ? id : Guid.Empty;
-    }
+    // ─── Request / Response models ───────────────────────────────────────────
 
     public class SendMessageRequest
     {
         public Guid ConversationId { get; set; }
+        public Guid? RecipientId { get; set; }
         public string Message { get; set; } = string.Empty;
-        public string? AttachmentUrl { get; set; }
     }
 
     public class CreateConversationRequest
     {
+        public Guid RecipientId { get; set; }
         public string? InitialMessage { get; set; }
+    }
+
+    private Guid GetCurrentUserId()
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+            ?? User.FindFirst("nameid")?.Value
+            ?? User.FindFirst("sub")?.Value;
+        return userId is not null && Guid.TryParse(userId, out var id) ? id : Guid.Empty;
     }
 }

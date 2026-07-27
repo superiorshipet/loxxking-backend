@@ -24,9 +24,9 @@ public class InvoicesController : ControllerBase
     {
         var invoices = await _unitOfWork.Invoices.Query()
             .Include(i => i.Order)
-                .ThenInclude(o => o.Country)
+                .ThenInclude(o => o.Customer)
             .Include(i => i.Order)
-                .ThenInclude(o => o.User)
+                .ThenInclude(o => o.Country)
             .Select(i => new
             {
                 i.Id,
@@ -37,7 +37,7 @@ public class InvoicesController : ControllerBase
                 {
                     i.Order.Id,
                     i.Order.OrderNumber,
-                    CustomerName = i.Order.User != null ? i.Order.User.Name : i.Order.GuestName,
+                    CustomerName = i.Order.Customer != null ? i.Order.Customer.Name : "Guest",
                     Country = i.Order.Country.Name
                 }
             })
@@ -54,15 +54,15 @@ public class InvoicesController : ControllerBase
 
         var invoice = await _unitOfWork.Invoices.Query()
             .Include(i => i.Order)
-                .ThenInclude(o => o.Country)
+                .ThenInclude(o => o.Customer)
             .Include(i => i.Order)
-                .ThenInclude(o => o.User)
+                .ThenInclude(o => o.Country)
             .FirstOrDefaultAsync(i => i.Id == id, cancellationToken);
 
         if (invoice is null)
             return NotFound();
 
-        if (!isStaff && invoice.Order.UserId != userId)
+        if (!isStaff && invoice.Order.CustomerId != userId)
             return Forbid();
 
         return Ok(new
@@ -75,34 +75,35 @@ public class InvoicesController : ControllerBase
             {
                 invoice.Order.Id,
                 invoice.Order.OrderNumber,
-                CustomerName = invoice.Order.User != null ? invoice.Order.User.Name : invoice.Order.GuestName,
+                CustomerName = invoice.Order.Customer != null ? invoice.Order.Customer.Name : "Guest",
                 Country = invoice.Order.Country.Name
             }
         });
     }
 
-    [HttpPost]
+    [HttpPost("{orderId}")]
     [Authorize(Roles = "Admin,StoreManager")]
     public async Task<IActionResult> Create(Guid orderId, CancellationToken cancellationToken)
     {
         var order = await _unitOfWork.Orders.Query()
-            .Include(o => o.User)
+            .Include(o => o.Customer)
             .FirstOrDefaultAsync(o => o.Id == orderId, cancellationToken);
 
         if (order is null)
             return NotFound(new { message = "Order not found." });
 
+        // Return existing invoice if already generated
         var existing = await _unitOfWork.Invoices.Query()
-            .AnyAsync(i => i.OrderId == orderId, cancellationToken);
+            .FirstOrDefaultAsync(i => i.OrderId == orderId, cancellationToken);
 
-        if (existing)
-            return BadRequest(new { message = "Invoice already exists for this order." });
+        if (existing is not null)
+            return Ok(new { existing.Id, existing.InvoiceNumber, existing.TotalAmount, existing.IssuedAt, alreadyExisted = true });
 
         var invoice = new Invoice
         {
             Id = Guid.NewGuid(),
             OrderId = orderId,
-            InvoiceNumber = $"INV-{DateTime.UtcNow:yyyyMMdd}-{orderId.ToString().Substring(0, 8)}",
+            InvoiceNumber = $"INV-{DateTime.UtcNow:yyyyMMdd}-{orderId.ToString()[..8].ToUpper()}",
             TotalAmount = order.TotalAmount,
             IssuedAt = DateTime.UtcNow
         };
@@ -110,7 +111,21 @@ public class InvoicesController : ControllerBase
         await _unitOfWork.Invoices.AddAsync(invoice, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return CreatedAtAction(nameof(GetById), new { id = invoice.Id }, invoice);
+        return CreatedAtAction(nameof(GetById), new { id = invoice.Id }, new { invoice.Id, invoice.InvoiceNumber, invoice.TotalAmount, invoice.IssuedAt });
+    }
+
+    /// <summary>Find an invoice by its order ID (used by the frontend download button).</summary>
+    [HttpGet("by-order/{orderId}")]
+    [Authorize(Roles = "Admin,StoreManager")]
+    public async Task<IActionResult> GetByOrderId(Guid orderId, CancellationToken cancellationToken)
+    {
+        var invoice = await _unitOfWork.Invoices.Query()
+            .FirstOrDefaultAsync(i => i.OrderId == orderId, cancellationToken);
+
+        if (invoice is null)
+            return NotFound(new { message = "No invoice for this order yet. Generate one first." });
+
+        return Ok(new { invoice.Id, invoice.InvoiceNumber, invoice.TotalAmount, invoice.IssuedAt });
     }
 
     [HttpGet("{id}/pdf")]
@@ -122,9 +137,9 @@ public class InvoicesController : ControllerBase
 
         var invoice = await _unitOfWork.Invoices.Query()
             .Include(i => i.Order)
-                .ThenInclude(o => o.Country)
+                .ThenInclude(o => o.Customer)
             .Include(i => i.Order)
-                .ThenInclude(o => o.User)
+                .ThenInclude(o => o.Country)
             .Include(i => i.Order)
                 .ThenInclude(o => o.OrderItems)
                     .ThenInclude(oi => oi.Product)
@@ -133,7 +148,7 @@ public class InvoicesController : ControllerBase
         if (invoice is null)
             return NotFound();
 
-        if (!isStaff && invoice.Order.UserId != userId)
+        if (!isStaff && invoice.Order.CustomerId != userId)
             return Forbid();
 
         var pdfGenerator = HttpContext.RequestServices.GetRequiredService<IInvoicePdfGenerator>();
