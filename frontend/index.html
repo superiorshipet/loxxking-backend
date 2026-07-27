@@ -1,136 +1,827 @@
 <!DOCTYPE html>
-<html lang="ar" dir="ltr">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LoxxKing Admin Dashboard</title>
+    <title>LoxxKing E-Commerce & Backend Management Portal</title>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <h1>🏆 LoxxKing Admin Panel</h1>
-            <div id="auth-status">
-                <span id="user-info">غير مسجل الدخول</span>
-                <button id="logout-btn" style="display:none;" onclick="logout()">تسجيل خروج</button>
+    <div class="app-layout">
+        <!-- Top Navigation Header -->
+        <header class="top-header">
+            <div class="header-brand">
+                <div class="logo-icon">👑</div>
+                <div class="brand-text">
+                    <h1>LoxxKing Portal</h1>
+                    <span class="subtitle">Storefront & Management Suite</span>
+                </div>
+            </div>
+
+            <!-- View Mode Switcher: Storefront vs Admin Suite -->
+            <div class="mode-switcher-container">
+                <div class="mode-switcher">
+                    <button id="mode-storefront-btn" class="mode-btn active" onclick="switchPortalMode('storefront')">
+                        <span>🛒 Customer Shop</span>
+                        <span class="mode-pill">No Auth Req.</span>
+                    </button>
+                    <button id="mode-admin-btn" class="mode-btn" onclick="switchPortalMode('admin')">
+                        <span>🛠️ Admin / Manager Suite</span>
+                        <span class="mode-pill admin">Full CRUD</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- API Endpoint & Status Bar -->
+            <div class="endpoint-bar">
+                <div class="status-indicator" id="status-indicator">
+                    <span class="dot yellow" id="status-dot"></span>
+                    <span class="status-text" id="status-text">Ping API...</span>
+                </div>
+                <div class="endpoint-picker">
+                    <select id="endpoint-select" onchange="handleEndpointChange()">
+                        <option value="http://localhost:5196/api">🟢 Local API (localhost:5196)</option>
+                        <option value="https://loxxking-backend-production.up.railway.app/api" selected>🚀 Production Railway</option>
+                        <option value="custom">⚙️ Custom Endpoint...</option>
+                    </select>
+                </div>
+                <button onclick="pingBackend()" class="btn btn-outline-light btn-xs" title="Ping API">⚡ Ping</button>
+            </div>
+
+            <!-- User Auth / Profile Bar -->
+            <div class="auth-bar" id="auth-bar">
+                <div id="user-profile-badge" class="user-badge" style="display:none;">
+                    <span class="user-avatar">👤</span>
+                    <div class="user-details">
+                        <span class="user-name" id="user-name-display">Guest</span>
+                        <span class="user-role-chip" id="user-role-display">Guest</span>
+                    </div>
+                    <button class="btn btn-icon btn-logout" onclick="logout()" title="Logout">🚪</button>
+                </div>
+                <button id="quick-login-btn" class="btn btn-accent btn-sm" onclick="openLoginModal()">🔑 Sign In</button>
             </div>
         </header>
 
-        <!-- Login Section -->
-        <section id="login-section" class="card">
-            <h2>🔐 تسجيل الدخول</h2>
-            <div class="login-form">
-                <div class="form-group">
-                    <label>البريد الإلكتروني</label>
-                    <input type="email" id="login-email" value="admin@loxxking.com">
+        <!-- ============================================================ -->
+        <!-- MODE 1: CUSTOMER STOREFRONT (NO ACCOUNT REQUIRED) -->
+        <!-- ============================================================ -->
+        <div id="storefront-mode" class="portal-mode active">
+            <!-- Storefront Sub-Header / Hero -->
+            <div class="storefront-hero">
+                <div class="hero-content">
+                    <h2>Welcome to LoxxKing Shop</h2>
+                    <p>Browse our catalog, place orders as a guest (no account needed!), track shipments, and live chat with support.</p>
                 </div>
-                <div class="form-group">
-                    <label>كلمة المرور</label>
-                    <input type="password" id="login-password" value="Admin@123456">
+                <div class="hero-actions">
+                    <button class="btn btn-light" onclick="openCartModal()">
+                        <span>🛒 Shopping Cart</span>
+                        <span class="cart-badge" id="cart-count-badge">0</span>
+                    </button>
+                    <button class="btn btn-outline-light" onclick="openTrackOrderModal()">📦 Track Order</button>
+                    <button class="btn btn-outline-light" onclick="openCustomerChatWidget()">💬 Live Support</button>
                 </div>
-                <button onclick="login()" class="btn btn-primary">تسجيل الدخول</button>
-                <div id="login-message" class="message"></div>
             </div>
-        </section>
 
-        <!-- Dashboard -->
-        <section id="dashboard" style="display:none;">
-            <!-- Navigation Tabs -->
-            <nav class="tabs">
-                <button class="tab-btn active" onclick="showTab('users')">👥 المستخدمين</button>
-                <button class="tab-btn" onclick="showTab('categories')">📂 التصنيفات</button>
-                <button class="tab-btn" onclick="showTab('products')">📦 المنتجات</button>
-                <button class="tab-btn" onclick="showTab('offers')">🎯 العروض</button>
-                <button class="tab-btn" onclick="showTab('orders')">📋 الطلبات</button>
-                <button class="tab-btn" onclick="showTab('site-visits')">📊 الزيارات</button>
-                <button class="tab-btn" onclick="showTab('staff')">👔 إدارة الموظفين</button>
-            </nav>
+            <!-- Main Shop Layout -->
+            <div class="storefront-body">
+                <!-- Shop Filter Sidebar -->
+                <aside class="shop-filter-panel">
+                    <h3>Filter Catalog</h3>
+                    <div class="form-group">
+                        <label>Search Product</label>
+                        <input type="text" id="shop-search-input" placeholder="Search by name..." onkeyup="filterShopProducts()">
+                    </div>
+                    <div class="form-group">
+                        <label>Category</label>
+                        <select id="shop-category-filter" onchange="filterShopProducts()">
+                            <option value="">All Categories</option>
+                        </select>
+                    </div>
+                    <div class="card margin-top-md shadow-sm">
+                        <h4>🔥 Special Offers</h4>
+                        <div id="shop-offers-preview" class="shop-offers-list">
+                            <div class="loading-state">Checking active deals...</div>
+                        </div>
+                    </div>
+                </aside>
 
-            <!-- Tab Content -->
-            <div id="tab-content" class="tab-content">
-                <!-- Users Tab -->
-                <div id="tab-users" class="tab-pane active">
-                    <h3>👥 المستخدمين</h3>
-                    <button onclick="loadUsers()" class="btn btn-secondary">تحميل المستخدمين</button>
-                    <div id="users-list" class="data-list"></div>
+                <!-- Shop Products Grid -->
+                <main class="shop-products-container">
+                    <div class="shop-grid-header">
+                        <h3 id="shop-results-count">Showing All Products</h3>
+                    </div>
+                    <div id="shop-products-grid" class="shop-products-grid">
+                        <div class="loading-state">Loading products from API...</div>
+                    </div>
+                </main>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- MODE 2: ADMIN / MANAGER MANAGEMENT SUITE (FULL CRUD) -->
+        <!-- ============================================================ -->
+        <div id="admin-mode" class="portal-mode">
+            <div class="main-body">
+                <!-- Sidebar Navigation -->
+                <aside class="sidebar">
+                    <nav class="nav-menu">
+                        <button class="nav-item active" onclick="switchTab('overview')" id="nav-overview">
+                            <span class="icon">📊</span> Overview & System Info
+                        </button>
+                        <button class="nav-item" onclick="switchTab('products')" id="nav-products">
+                            <span class="icon">📦</span> Product Catalog (CRUD)
+                        </button>
+                        <button class="nav-item" onclick="switchTab('categories')" id="nav-categories">
+                            <span class="icon">📂</span> Categories (CRUD)
+                        </button>
+                        <button class="nav-item" onclick="switchTab('orders')" id="nav-orders">
+                            <span class="icon">📋</span> Orders & Invoices (PDF)
+                        </button>
+                        <button class="nav-item" onclick="switchTab('offers')" id="nav-offers">
+                            <span class="icon">🎯</span> Active Offers (CRUD)
+                        </button>
+                        <button class="nav-item" onclick="switchTab('staff')" id="nav-staff">
+                            <span class="icon">👔</span> Staff & Roles (CRUD)
+                        </button>
+                        <button class="nav-item" onclick="switchTab('chat')" id="nav-chat">
+                            <span class="icon">💬</span> Customer Support Chat
+                        </button>
+                        <button class="nav-item" onclick="switchTab('analytics')" id="nav-analytics">
+                            <span class="icon">📈</span> Traffic & Visits
+                        </button>
+                        <button class="nav-item" onclick="switchTab('auth')" id="nav-auth">
+                            <span class="icon">🔐</span> Auth & Roles
+                        </button>
+                    </nav>
+
+                    <div class="sidebar-footer">
+                        <button class="btn btn-sm btn-full btn-dark" onclick="toggleApiConsole()">
+                            <span>💻 Live API Inspector</span>
+                            <span class="console-badge" id="console-count-badge">0</span>
+                        </button>
+                    </div>
+                </aside>
+
+                <!-- Main Admin Content Area -->
+                <main class="content-area">
+
+                    <!-- TAB 1: OVERVIEW -->
+                    <section id="tab-overview" class="tab-page active">
+                        <div class="page-header">
+                            <h2>📊 Backend Capability Overview</h2>
+                            <p class="text-muted">Live system metrics and real-time connectivity status with your .NET 10 Web API backend.</p>
+                        </div>
+
+                        <!-- Metrics / Stats Cards -->
+                        <div class="stats-grid">
+                            <div class="stat-card blue">
+                                <div class="stat-icon">📦</div>
+                                <div class="stat-info">
+                                    <span class="stat-label">Total Products</span>
+                                    <span class="stat-value" id="stat-products-count">...</span>
+                                </div>
+                            </div>
+                            <div class="stat-card green">
+                                <div class="stat-icon">📋</div>
+                                <div class="stat-info">
+                                    <span class="stat-label">Total Orders</span>
+                                    <span class="stat-value" id="stat-orders-count">...</span>
+                                </div>
+                            </div>
+                            <div class="stat-card purple">
+                                <div class="stat-icon">📂</div>
+                                <div class="stat-info">
+                                    <span class="stat-label">Categories</span>
+                                    <span class="stat-value" id="stat-categories-count">...</span>
+                                </div>
+                            </div>
+                            <div class="stat-card orange">
+                                <div class="stat-icon">🎯</div>
+                                <div class="stat-info">
+                                    <span class="stat-label">Active Offers</span>
+                                    <span class="stat-value" id="stat-offers-count">...</span>
+                                </div>
+                            </div>
+                            <div class="stat-card cyan">
+                                <div class="stat-icon">👔</div>
+                                <div class="stat-info">
+                                    <span class="stat-label">Staff Members</span>
+                                    <span class="stat-value" id="stat-staff-count">...</span>
+                                </div>
+                            </div>
+                            <div class="stat-card red">
+                                <div class="stat-icon">📊</div>
+                                <div class="stat-info">
+                                    <span class="stat-label">Visits Today</span>
+                                    <span class="stat-value" id="stat-visits-today">...</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tech Stack Features Showcase -->
+                        <div class="card-section">
+                            <h3>🛠️ Backend Architecture Features</h3>
+                            <div class="features-grid">
+                                <div class="feature-card">
+                                    <span class="badge badge-tech">.NET 10 Web API</span>
+                                    <h4>Clean Architecture</h4>
+                                    <p>Separation of Domain, Application, Infrastructure, and API layers for scalability.</p>
+                                </div>
+                                <div class="feature-card">
+                                    <span class="badge badge-tech">PostgreSQL & EF Core</span>
+                                    <h4>Relational Persistence</h4>
+                                    <p>Robust schema with entity relationships, migrations, and transactional integrity.</p>
+                                </div>
+                                <div class="feature-card">
+                                    <span class="badge badge-tech">Redis Caching</span>
+                                    <h4>High Performance</h4>
+                                    <p>Caching for high-frequency queries like Categories and Active Offers.</p>
+                                </div>
+                                <div class="feature-card">
+                                    <span class="badge badge-tech">JWT & Role Security</span>
+                                    <h4>Multi-Tier Roles</h4>
+                                    <p>Role-based authorization for Admin, Store Manager, Sales Employee, and Customer.</p>
+                                </div>
+                                <div class="feature-card">
+                                    <span class="badge badge-tech">QuestPDF Engine</span>
+                                    <h4>Dynamic Invoicing</h4>
+                                    <p>Instant PDF order invoice generation directly from API endpoints.</p>
+                                </div>
+                                <div class="feature-card">
+                                    <span class="badge badge-tech">Cloudinary & Media</span>
+                                    <h4>File Storage Integration</h4>
+                                    <p>Cloud image uploads and media hosting for product catalog.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- TAB 2: PRODUCTS (FULL CRUD) -->
+                    <section id="tab-products" class="tab-page">
+                        <div class="page-header flex-header">
+                            <div>
+                                <h2>📦 Product Catalog (Full CRUD)</h2>
+                                <p class="text-muted">Create, Read, Edit Product, Update Price/Stock, and Delete products.</p>
+                            </div>
+                            <div class="action-buttons">
+                                <button class="btn btn-primary" onclick="openAddProductModal()">➕ Create Product</button>
+                                <button class="btn btn-secondary" onclick="loadProducts()">🔄 Refresh</button>
+                            </div>
+                        </div>
+
+                        <!-- Search and Filter Controls -->
+                        <div class="filter-card">
+                            <div class="filter-inputs">
+                                <div class="input-with-icon">
+                                    <span>🔍</span>
+                                    <input type="text" id="product-search-input" placeholder="Search products by name..." onkeyup="filterProducts()">
+                                </div>
+                                <select id="product-category-filter" onchange="filterProducts()">
+                                    <option value="">All Categories</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div id="products-grid" class="products-grid">
+                            <div class="loading-state">Loading product catalog from API...</div>
+                        </div>
+                    </section>
+
+                    <!-- TAB 3: CATEGORIES (FULL CRUD) -->
+                    <section id="tab-categories" class="tab-page">
+                        <div class="page-header flex-header">
+                            <div>
+                                <h2>📂 Categories Management (CRUD)</h2>
+                                <p class="text-muted">Manage product categories cached with Redis.</p>
+                            </div>
+                            <button class="btn btn-secondary" onclick="loadCategories()">🔄 Refresh</button>
+                        </div>
+
+                        <div class="two-column-layout">
+                            <!-- Add Category Form -->
+                            <div class="card shadow-sm">
+                                <h3>➕ Create New Category</h3>
+                                <div class="form-group">
+                                    <label>Arabic Name (الاسم بالعربية)</label>
+                                    <input type="text" id="cat-name-ar" placeholder="مثال: أحذية رياضية">
+                                </div>
+                                <div class="form-group">
+                                    <label>English Name</label>
+                                    <input type="text" id="cat-name-en" placeholder="e.g. Sports Shoes">
+                                </div>
+                                <button class="btn btn-success btn-full" onclick="createCategory()">Create Category</button>
+                            </div>
+
+                            <!-- Category List -->
+                            <div class="card shadow-sm">
+                                <h3>📋 Existing Categories</h3>
+                                <div id="categories-list" class="list-container">
+                                    <div class="loading-state">Loading categories...</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- TAB 4: ORDERS & INVOICES -->
+                    <section id="tab-orders" class="tab-page">
+                        <div class="page-header flex-header">
+                            <div>
+                                <h2>📋 Orders & PDF Invoices</h2>
+                                <p class="text-muted">Manage order fulfillment status, search orders, and download backend PDF invoices.</p>
+                            </div>
+                            <button class="btn btn-secondary" onclick="loadOrders()">🔄 Refresh Orders</button>
+                        </div>
+
+                        <div class="card shadow-sm">
+                            <div id="orders-list-table" class="table-responsive">
+                                <div class="loading-state">Loading order records...</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- TAB 5: OFFERS (CRUD) -->
+                    <section id="tab-offers" class="tab-page">
+                        <div class="page-header flex-header">
+                            <div>
+                                <h2>🎯 Active Promotional Offers (CRUD)</h2>
+                                <p class="text-muted">Manage product discounts, date ranges, and deal status.</p>
+                            </div>
+                            <button class="btn btn-secondary" onclick="loadOffers()">🔄 Refresh Offers</button>
+                        </div>
+
+                        <div class="two-column-layout">
+                            <!-- Create Offer -->
+                            <div class="card shadow-sm">
+                                <h3>➕ Create Product Offer</h3>
+                                <div class="form-group">
+                                    <label>Target Product</label>
+                                    <select id="offer-product-select">
+                                        <option value="">Select Product...</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Discount Percentage (%)</label>
+                                    <input type="number" id="offer-discount" min="1" max="99" placeholder="e.g. 20">
+                                </div>
+                                <div class="form-group">
+                                    <label>Start Date</label>
+                                    <input type="date" id="offer-start-date">
+                                </div>
+                                <div class="form-group">
+                                    <label>End Date</label>
+                                    <input type="date" id="offer-end-date">
+                                </div>
+                                <button class="btn btn-warning btn-full" onclick="createOffer()">Launch Offer</button>
+                            </div>
+
+                            <!-- Offers List -->
+                            <div class="card shadow-sm">
+                                <h3>🔥 Active Offers</h3>
+                                <div id="offers-list" class="list-container">
+                                    <div class="loading-state">Loading active offers...</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- TAB 6: STAFF MANAGEMENT (FULL CRUD) -->
+                    <section id="tab-staff" class="tab-page">
+                        <div class="page-header flex-header">
+                            <div>
+                                <h2>👔 Staff & Role Management (CRUD)</h2>
+                                <p class="text-muted">Create Store Managers, Sales Employees, toggle active status, and delete accounts.</p>
+                            </div>
+                            <button class="btn btn-secondary" onclick="loadStaff()">🔄 Refresh Staff</button>
+                        </div>
+
+                        <div class="two-column-layout">
+                            <!-- Create Manager -->
+                            <div class="card shadow-sm">
+                                <h3>👔 Add Store Manager (Admin Only)</h3>
+                                <div class="form-group">
+                                    <label>Full Name</label>
+                                    <input type="text" id="mgr-name" placeholder="John Manager">
+                                </div>
+                                <div class="form-group">
+                                    <label>Email Address</label>
+                                    <input type="email" id="mgr-email" placeholder="manager@loxxking.com">
+                                </div>
+                                <div class="form-group">
+                                    <label>Phone Number</label>
+                                    <input type="text" id="mgr-phone" placeholder="+201000000000">
+                                </div>
+                                <div class="form-group">
+                                    <label>Password</label>
+                                    <input type="password" id="mgr-password" placeholder="••••••••">
+                                </div>
+                                <div class="form-group">
+                                    <label>Country</label>
+                                    <input type="text" id="mgr-country" value="Egypt">
+                                </div>
+                                <button class="btn btn-warning btn-full" onclick="createManager()">Create Store Manager</button>
+                            </div>
+
+                            <!-- Create Employee -->
+                            <div class="card shadow-sm">
+                                <h3>💼 Add Sales Employee</h3>
+                                <div class="form-group">
+                                    <label>Full Name</label>
+                                    <input type="text" id="emp-name" placeholder="Jane Employee">
+                                </div>
+                                <div class="form-group">
+                                    <label>Email Address</label>
+                                    <input type="email" id="emp-email" placeholder="employee@loxxking.com">
+                                </div>
+                                <div class="form-group">
+                                    <label>Phone Number</label>
+                                    <input type="text" id="emp-phone" placeholder="+201100000000">
+                                </div>
+                                <div class="form-group">
+                                    <label>Password</label>
+                                    <input type="password" id="emp-password" placeholder="••••••••">
+                                </div>
+                                <div class="form-group">
+                                    <label>Country</label>
+                                    <input type="text" id="emp-country" value="Egypt">
+                                </div>
+                                <button class="btn btn-info btn-full" onclick="createEmployee()">Create Sales Employee</button>
+                            </div>
+                        </div>
+
+                        <!-- Staff List Table -->
+                        <div class="card shadow-sm margin-top-lg">
+                            <h3>👥 Existing Staff Roster</h3>
+                            <div id="staff-list-table" class="table-responsive">
+                                <div class="loading-state">Loading staff members...</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- TAB 7: SUPPORT CHAT HANDLING -->
+                    <section id="tab-chat" class="tab-page">
+                        <div class="page-header flex-header">
+                            <div>
+                                <h2>💬 Customer Support Chat Center</h2>
+                                <p class="text-muted">Manage active customer chat conversations and respond live.</p>
+                            </div>
+                            <button class="btn btn-secondary" onclick="loadSupportConversations()">🔄 Refresh Chats</button>
+                        </div>
+
+                        <div class="two-column-layout">
+                            <div class="card shadow-sm">
+                                <h3>💬 Active Conversations</h3>
+                                <div id="admin-chat-threads" class="list-container">
+                                    <div class="loading-state">Loading conversations...</div>
+                                </div>
+                            </div>
+                            <div class="card shadow-sm">
+                                <h3>📨 Conversation Thread</h3>
+                                <div id="admin-chat-messages" class="chat-thread-box">
+                                    <div class="loading-state">Select a conversation thread to view messages</div>
+                                </div>
+                                <div class="chat-input-row margin-top-md" id="admin-chat-input-row" style="display:none;">
+                                    <input type="text" id="admin-chat-message-input" placeholder="Type reply message...">
+                                    <button class="btn btn-primary" onclick="sendAdminChatMessage()">Send</button>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- TAB 8: ANALYTICS & TRAFFIC -->
+                    <section id="tab-analytics" class="tab-page">
+                        <div class="page-header flex-header">
+                            <div>
+                                <h2>📈 Traffic Analytics & Site Visits</h2>
+                                <p class="text-muted">Real-time visitor logging captured by backend tracking middleware.</p>
+                            </div>
+                            <button class="btn btn-secondary" onclick="loadSiteVisits()">🔄 Refresh Visits</button>
+                        </div>
+
+                        <div class="stats-grid">
+                            <div class="stat-card green">
+                                <div class="stat-icon">📅</div>
+                                <div class="stat-info">
+                                    <span class="stat-label">Visits Registered Today</span>
+                                    <span class="stat-value" id="analytics-today-count">0</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card shadow-sm margin-top-md">
+                            <h3>🌐 Recent Site Visits Log</h3>
+                            <div id="site-visits-table" class="table-responsive">
+                                <div class="loading-state">Loading visit activity...</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- TAB 9: AUTHENTICATION -->
+                    <section id="tab-auth" class="tab-page">
+                        <div class="page-header">
+                            <h2>🔐 Authentication & JWT Tokens</h2>
+                            <p class="text-muted">Inspect issued JWT payload, switch roles, and verify access privileges.</p>
+                        </div>
+
+                        <div class="two-column-layout">
+                            <!-- Login Form Card -->
+                            <div class="card shadow-sm">
+                                <h3>🔑 Account Login</h3>
+                                <div class="quick-credentials">
+                                    <span>Quick Fill Presets:</span>
+                                    <div class="preset-btns">
+                                        <button class="btn btn-xs btn-outline" onclick="fillCredentials('admin@loxxking.com', 'Admin@123456')">Super Admin</button>
+                                    </div>
+                                </div>
+                                <div class="form-group margin-top-md">
+                                    <label>Email Address</label>
+                                    <input type="email" id="auth-email-input" value="admin@loxxking.com">
+                                </div>
+                                <div class="form-group">
+                                    <label>Password</label>
+                                    <input type="password" id="auth-password-input" value="Admin@123456">
+                                </div>
+                                <button class="btn btn-primary btn-full" onclick="login()">Sign In & Get Token</button>
+                            </div>
+
+                            <!-- Current Session Card -->
+                            <div class="card shadow-sm">
+                                <h3>👤 Active Token & Profile Info</h3>
+                                <div id="auth-profile-details">
+                                    <div class="alert alert-info">Not logged in. Use the form on the left or quick presets.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                </main>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- MODALS & OVERLAYS -->
+        <!-- ============================================================ -->
+
+        <!-- Shopping Cart Modal (Storefront) -->
+        <div id="cart-modal" class="modal-overlay" style="display:none;">
+            <div class="modal-card modal-large">
+                <div class="modal-header">
+                    <h3>🛒 Your Shopping Cart</h3>
+                    <button class="close-btn" onclick="closeCartModal()">✕</button>
                 </div>
+                <div class="modal-body">
+                    <div id="cart-items-list" class="list-container">
+                        <div class="loading-state">Your cart is empty. Browse products and click "Add to Cart"!</div>
+                    </div>
+                    <div class="cart-summary-box margin-top-md" id="cart-summary-box" style="display:none;">
+                        <div class="cart-total-row">
+                            <span>Cart Total:</span>
+                            <strong id="cart-total-amount">0.00 EGP</strong>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeCartModal()">Continue Shopping</button>
+                    <button id="checkout-btn" class="btn btn-success" onclick="openGuestCheckoutModal()" style="display:none;">Proceed to Checkout (No Account Needed)</button>
+                </div>
+            </div>
+        </div>
 
-                <!-- Categories Tab -->
-                <div id="tab-categories" class="tab-pane">
-                    <h3>📂 التصنيفات</h3>
+        <!-- Guest Checkout Modal (No Account Required) -->
+        <div id="guest-checkout-modal" class="modal-overlay" style="display:none;">
+            <div class="modal-card modal-large">
+                <div class="modal-header">
+                    <h3>🛍️ Quick Guest Checkout (No Account Needed)</h3>
+                    <button class="close-btn" onclick="closeGuestCheckoutModal()">✕</button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info margin-bottom-md">
+                        ✨ No registration or login required! Simply enter your delivery details below to place your order.
+                    </div>
                     <div class="form-row">
-                        <input type="text" id="category-name-ar" placeholder="الاسم بالعربي">
-                        <input type="text" id="category-name-en" placeholder="الاسم بالإنجليزي">
-                        <button onclick="createCategory()" class="btn btn-success">إضافة تصنيف</button>
-                    </div>
-                    <button onclick="loadCategories()" class="btn btn-secondary">تحميل التصنيفات</button>
-                    <div id="categories-list" class="data-list"></div>
-                </div>
-
-                <!-- Products Tab -->
-                <div id="tab-products" class="tab-pane">
-                    <h3>📦 المنتجات</h3>
-                    <button onclick="loadProducts()" class="btn btn-secondary">تحميل المنتجات</button>
-                    <div id="products-list" class="data-list"></div>
-                </div>
-
-                <!-- Offers Tab -->
-                <div id="tab-offers" class="tab-pane">
-                    <h3>🎯 العروض</h3>
-                    <button onclick="loadOffers()" class="btn btn-secondary">تحميل العروض النشطة</button>
-                    <div id="offers-list" class="data-list"></div>
-                </div>
-
-                <!-- Orders Tab -->
-                <div id="tab-orders" class="tab-pane">
-                    <h3>📋 الطلبات</h3>
-                    <button onclick="loadOrders()" class="btn btn-secondary">تحميل الطلبات</button>
-                    <div id="orders-list" class="data-list"></div>
-                </div>
-
-                <!-- Site Visits Tab -->
-                <div id="tab-site-visits" class="tab-pane">
-                    <h3>📊 زيارات الموقع</h3>
-                    <div class="stat-card">
-                        <span>زيارات اليوم:</span>
-                        <span id="today-count">-</span>
-                    </div>
-                    <button onclick="loadSiteVisits()" class="btn btn-secondary">تحميل الزيارات</button>
-                    <div id="site-visits-list" class="data-list"></div>
-                </div>
-
-                <!-- Staff Management Tab -->
-                <div id="tab-staff" class="tab-pane">
-                    <h3>👔 إدارة الموظفين</h3>
-                    <div class="staff-forms">
-                        <div class="form-card">
-                            <h4>إضافة مدير متجر (Admin Only)</h4>
-                            <input type="text" id="manager-name" placeholder="الاسم">
-                            <input type="email" id="manager-email" placeholder="البريد الإلكتروني">
-                            <input type="text" id="manager-phone" placeholder="رقم الهاتف">
-                            <input type="password" id="manager-password" placeholder="كلمة المرور">
-                            <input type="text" id="manager-country" placeholder="الدولة (مصر)">
-                            <button onclick="createManager()" class="btn btn-warning">إضافة مدير متجر</button>
+                        <div class="form-group half">
+                            <label>Full Name *</label>
+                            <input type="text" id="checkout-name" placeholder="John Doe">
                         </div>
-                        <div class="form-card">
-                            <h4>إضافة موظف مبيعات</h4>
-                            <input type="text" id="employee-name" placeholder="الاسم">
-                            <input type="email" id="employee-email" placeholder="البريد الإلكتروني">
-                            <input type="text" id="employee-phone" placeholder="رقم الهاتف">
-                            <input type="password" id="employee-password" placeholder="كلمة المرور">
-                            <input type="text" id="employee-country" placeholder="الدولة (مصر)">
-                            <button onclick="createEmployee()" class="btn btn-info">إضافة موظف مبيعات</button>
+                        <div class="form-group half">
+                            <label>Phone Number *</label>
+                            <input type="text" id="checkout-phone" placeholder="+201000000000">
                         </div>
                     </div>
-                    <button onclick="loadStaff()" class="btn btn-secondary">تحميل الموظفين</button>
-                    <div id="staff-list" class="data-list"></div>
+                    <div class="form-group">
+                        <label>Delivery Shipping Address *</label>
+                        <input type="text" id="checkout-address" placeholder="123 Street Name, City, Country">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>🌍 Your Country *</label>
+                            <select id="checkout-country-id">
+                                <option value="">⏳ Detecting location...</option>
+                            </select>
+                            <small id="checkout-geo-note" style="color:var(--text-muted);font-size:11px;"></small>
+                        </div>
+                        <div class="form-group half">
+                            <label>Payment Method *</label>
+                            <select id="checkout-payment-method">
+                                <option value="0">Cash On Delivery (COD)</option>
+                                <option value="1">Credit / Debit Card</option>
+                                <option value="2">Bank Transfer</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Order Notes (Optional)</label>
+                        <input type="text" id="checkout-notes" placeholder="Delivery instructions...">
+                    </div>
+                    <div class="cart-total-row margin-top-md" style="font-size:16px;">
+                        <span>Amount to Pay:</span>
+                        <strong id="checkout-total-display" style="color:var(--accent-blue);">0.00 EGP</strong>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeGuestCheckoutModal()">Back to Cart</button>
+                    <button class="btn btn-success" onclick="placeGuestOrder()">🎉 Complete Order Now</button>
                 </div>
             </div>
-        </section>
+        </div>
 
-        <!-- Message Display -->
-        <div id="message-container"></div>
+        <!-- Order Success & PDF Invoice Modal -->
+        <div id="order-success-modal" class="modal-overlay" style="display:none;">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <h3 style="color:var(--accent-emerald)">🎉 Order Placed Successfully!</h3>
+                    <button class="close-btn" onclick="closeOrderSuccessModal()">✕</button>
+                </div>
+                <div class="modal-body text-center">
+                    <div style="font-size:48px;margin-bottom:10px;">📦</div>
+                    <p>Thank you for your order! Your order has been registered in the backend database.</p>
+                    <div class="margin-y-md">
+                        <strong>Order Reference ID:</strong>
+                        <div id="success-order-id" class="badge badge-tech" style="font-size:14px;padding:6px 14px;">...</div>
+                    </div>
+                    <button id="success-pdf-btn" class="btn btn-primary btn-full margin-top-md">📄 Download PDF Invoice</button>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary btn-full" onclick="closeOrderSuccessModal()">Done</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Order Tracking Modal -->
+        <div id="track-order-modal" class="modal-overlay" style="display:none;">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <h3>📦 Track Your Order</h3>
+                    <button class="close-btn" onclick="closeTrackOrderModal()">✕</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Enter Order ID</label>
+                        <input type="text" id="track-order-id-input" placeholder="e.g. 8a7b6c5d-...">
+                    </div>
+                    <button class="btn btn-primary btn-full" onclick="trackOrder()">Search Order Status</button>
+                    <div id="track-result-box" class="margin-top-md"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live Customer Support Chat Widget (Guest Chat) -->
+        <div id="customer-chat-widget" class="modal-overlay" style="display:none;">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <h3>💬 Live Support Chat</h3>
+                    <button class="close-btn" onclick="closeCustomerChatWidget()">✕</button>
+                </div>
+                <div class="modal-body">
+                    <div id="customer-chat-messages" class="chat-thread-box">
+                        <div class="chat-msg system">👋 Hello! How can we help you today? Send a message below.</div>
+                    </div>
+                    <div class="chat-input-row margin-top-md">
+                        <input type="text" id="customer-chat-input" placeholder="Type your message here...">
+                        <button class="btn btn-primary" onclick="sendCustomerChatMessage()">Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Custom Base URL Modal -->
+        <div id="custom-url-modal" class="modal-overlay" style="display:none;">
+            <div class="modal-card">
+                <h3>⚙️ Set Custom API Base URL</h3>
+                <p>Specify the absolute base URL of your backend API:</p>
+                <input type="text" id="custom-url-input" placeholder="http://127.0.0.1:5196/api" class="margin-y-md">
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeCustomUrlModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="saveCustomUrl()">Save & Connect</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edit/Add Product Modal (Admin) -->
+        <div id="add-product-modal" class="modal-overlay" style="display:none;">
+            <div class="modal-card modal-large">
+                <div class="modal-header">
+                    <h3 id="product-modal-title">📦 Create New Product</h3>
+                    <button class="close-btn" onclick="closeAddProductModal()">✕</button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="prod-edit-id">
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>English Name *</label>
+                            <input type="text" id="prod-name-en" placeholder="e.g. Premium Leather Shoes">
+                        </div>
+                        <div class="form-group half">
+                            <label>Arabic Name (الاسم بالعربية) *</label>
+                            <input type="text" id="prod-name-ar" placeholder="مثال: حذاء جلدي فاخر">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Category *</label>
+                            <select id="prod-category-select">
+                                <option value="">Select Category...</option>
+                            </select>
+                        </div>
+                        <div class="form-group half">
+                            <label>Base Price (Fallback, EGP) *</label>
+                            <input type="number" id="prod-price" step="0.01" placeholder="1500.00">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea id="prod-description" rows="2" placeholder="Enter product details..."></textarea>
+                    </div>
+
+                    <!-- Per-Country Pricing & Stock -->
+                    <div style="margin-top:16px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <label style="margin:0;font-weight:600;">🌍 Per-Country Price &amp; Stock</label>
+                            <small style="color:var(--text-muted);">Set price &amp; inventory per country for accurate order processing</small>
+                        </div>
+                        <div id="country-price-rows" style="display:flex;flex-direction:column;gap:8px;">
+                            <div style="color:var(--text-muted);font-size:13px;">⏳ Loading countries...</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeAddProductModal()">Cancel</button>
+                    <button class="btn btn-success" onclick="saveProductForm()">💾 Save Product</button>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Login / Auth Modal -->
+        <div id="login-modal" class="modal-overlay" style="display:none;">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <h3>🔐 Login to Backend API</h3>
+                    <button class="close-btn" onclick="closeLoginModal()">✕</button>
+                </div>
+                <div class="modal-body">
+                    <div class="quick-credentials">
+                        <span>Quick Super Admin Login:</span>
+                        <button class="btn btn-xs btn-outline" onclick="fillModalLogin('admin@loxxking.com', 'Admin@123456')">Super Admin</button>
+                    </div>
+                    <div class="form-group margin-top-md">
+                        <label>Email Address</label>
+                        <input type="email" id="modal-email" value="admin@loxxking.com">
+                    </div>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="password" id="modal-password" value="Admin@123456">
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeLoginModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="loginFromModal()">Login</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Collapsible Live API Inspector Console -->
+        <div class="api-console-drawer collapsed" id="api-console-drawer">
+            <div class="console-header" onclick="toggleApiConsole()">
+                <div class="console-title">
+                    <span>💻 Backend API Inspector Console</span>
+                    <span class="subtitle-text">Real-Time HTTP Requests & JSON Responses</span>
+                </div>
+                <div class="console-controls" onclick="event.stopPropagation()">
+                    <button class="btn btn-xs btn-outline" onclick="clearApiLogs()">Clear Logs</button>
+                    <button class="btn btn-xs btn-icon" onclick="toggleApiConsole()">🔻</button>
+                </div>
+            </div>
+            <div class="console-body" id="console-log-list">
+                <div class="console-placeholder">No API requests executed yet. Interact with the portal to view live HTTP traffic!</div>
+            </div>
+        </div>
+
+        <!-- Global Toast Notifications -->
+        <div id="toast-container" class="toast-container"></div>
     </div>
 
     <script src="app.js"></script>

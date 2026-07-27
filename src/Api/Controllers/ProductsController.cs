@@ -27,28 +27,7 @@ public class ProductsController : ControllerBase
     public record UpdateProductRequest(Guid CategoryId, string NameAr, string NameEn, string Description, decimal BasePrice);
     public record UpsertPriceRequest(Guid CountryId, decimal Price);
     public record UpsertInventoryRequest(Guid CountryId, int Quantity);
-    
-    public record ProductListItemDto(
-        Guid Id,
-        string NameAr,
-        string NameEn,
-        string Description,
-        string Category,
-        DateTime CreatedAt,
-        decimal Price,
-        int Stock
-    );
-    
-    public record ProductDetailDto(
-        Guid Id,
-        string NameAr,
-        string NameEn,
-        string Description,
-        string Category,
-        decimal Price,
-        int Stock,
-        DateTime CreatedAt
-    );
+    public record SetPriceRequest(decimal Price);
 
     [HttpGet]
     public async Task<IActionResult> GetAll(
@@ -62,26 +41,9 @@ public class ProductsController : ControllerBase
         page = page < 1 ? 1 : page;
         pageSize = pageSize is < 1 or > 100 ? 20 : pageSize;
 
-        // If no countryId provided, try to get from request header (set by GeoLocationMiddleware)
-        if (!countryId.HasValue)
-        {
-            var geoCountry = Request.Headers["X-Geo-Country"].FirstOrDefault();
-            if (!string.IsNullOrEmpty(geoCountry))
-            {
-                var country = await _unitOfWork.Countries.Query()
-                    .FirstOrDefaultAsync(c => c.Name == geoCountry, cancellationToken);
-                if (country != null)
-                {
-                    countryId = country.Id;
-                }
-            }
-        }
-
-        // Build cache key
         var version = await _cache.GetStringAsync(VersionKey, cancellationToken) ?? "1";
         var cacheKey = $"products:list:{categoryId}:{search}:{countryId}:{page}:{pageSize}:v{version}";
 
-        // Try to get from cache
         var cached = await _cache.GetStringAsync(cacheKey, cancellationToken);
         if (cached is not null)
         {
@@ -89,7 +51,6 @@ public class ProductsController : ControllerBase
             return Ok(cachedResult);
         }
 
-        // Query from database
         var query = _unitOfWork.Products.Query().Include(p => p.Category).AsQueryable();
 
         if (categoryId.HasValue)
@@ -141,20 +102,20 @@ public class ProductsController : ControllerBase
             .Where(i => productIds.Contains(i.ProductId) && i.CountryId == countryId.Value)
             .ToDictionaryAsync(i => i.ProductId, i => i.Quantity, cancellationToken);
 
-        var enriched = products.Select(p => new ProductListItemDto(
+        var enriched = products.Select(p => new
+        {
             p.Id,
             p.NameAr,
             p.NameEn,
             p.Description,
             p.Category,
             p.CreatedAt,
-            prices.TryGetValue(p.Id, out var price) ? price : p.BasePrice,
-            stock.TryGetValue(p.Id, out var qty) ? qty : 0
-        ));
+            Price = prices.TryGetValue(p.Id, out var price) ? price : p.BasePrice,
+            Stock = stock.TryGetValue(p.Id, out var qty) ? qty : 0
+        });
 
         finalResult = new { data = enriched, totalCount, page, pageSize, totalPages = (int)Math.Ceiling(totalCount / (double)pageSize) };
 
-        // Cache
         var cacheOptions = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl };
         await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(finalResult), cacheOptions, cancellationToken);
 
@@ -164,29 +125,12 @@ public class ProductsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(Guid id, [FromQuery] Guid? countryId, CancellationToken cancellationToken)
     {
-        // If no countryId provided, try to get from request header
-        if (!countryId.HasValue)
-        {
-            var geoCountry = Request.Headers["X-Geo-Country"].FirstOrDefault();
-            if (!string.IsNullOrEmpty(geoCountry))
-            {
-                var country = await _unitOfWork.Countries.Query()
-                    .FirstOrDefaultAsync(c => c.Name == geoCountry, cancellationToken);
-                if (country != null)
-                {
-                    countryId = country.Id;
-                }
-            }
-        }
-
-        // Build cache key
         var cacheKey = $"products:{id}:{countryId}";
 
-        // Try to get from cache
         var cached = await _cache.GetStringAsync(cacheKey, cancellationToken);
         if (cached is not null)
         {
-            var cachedResult = JsonSerializer.Deserialize<ProductDetailDto>(cached);
+            var cachedResult = JsonSerializer.Deserialize<object>(cached);
             return Ok(cachedResult);
         }
 
@@ -215,18 +159,18 @@ public class ProductsController : ControllerBase
                 .FirstOrDefaultAsync(cancellationToken);
         }
 
-        var finalResult = new ProductDetailDto(
+        var finalResult = new
+        {
             product.Id,
             product.NameAr,
             product.NameEn,
             product.Description,
-            product.Category.NameEn,
-            price,
-            stock,
+            Category = product.Category.NameEn,
+            Price = price,
+            Stock = stock,
             product.CreatedAt
-        );
+        };
 
-        // Cache
         var options = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl };
         await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(finalResult), options, cancellationToken);
 
@@ -255,7 +199,6 @@ public class ProductsController : ControllerBase
         await _unitOfWork.Products.AddAsync(product, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Invalidate cache - increment version
         await InvalidateProductCacheAsync(cancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { id = product.Id }, new { product.Id });
@@ -278,7 +221,6 @@ public class ProductsController : ControllerBase
         _unitOfWork.Products.Update(product);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Invalidate cache
         await InvalidateProductCacheAsync(cancellationToken);
 
         return Ok(new { product.Id });
@@ -295,10 +237,21 @@ public class ProductsController : ControllerBase
         _unitOfWork.Products.Remove(product);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Invalidate cache
         await InvalidateProductCacheAsync(cancellationToken);
 
         return NoContent();
+    }
+
+    [HttpGet("{id}/prices")]
+    public async Task<IActionResult> GetPrices(Guid id, CancellationToken cancellationToken)
+    {
+        var prices = await _unitOfWork.ProductPrices.Query()
+            .Include(pp => pp.Country)
+            .Where(pp => pp.ProductId == id)
+            .Select(pp => new { Country = pp.Country.Name, pp.CountryId, pp.Price })
+            .ToListAsync(cancellationToken);
+
+        return Ok(prices);
     }
 
     [HttpPut("{id}/prices")]
@@ -326,10 +279,21 @@ public class ProductsController : ControllerBase
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Invalidate cache
         await InvalidateProductCacheAsync(cancellationToken);
 
         return Ok(new { message = "Price updated." });
+    }
+
+    [HttpGet("{id}/inventory")]
+    public async Task<IActionResult> GetInventory(Guid id, CancellationToken cancellationToken)
+    {
+        var stock = await _unitOfWork.Inventories.Query()
+            .Include(i => i.Country)
+            .Where(i => i.ProductId == id)
+            .Select(i => new { Country = i.Country.Name, i.CountryId, i.Quantity, i.UpdatedAt })
+            .ToListAsync(cancellationToken);
+
+        return Ok(stock);
     }
 
     [HttpPut("{id}/inventory")]
@@ -359,39 +323,139 @@ public class ProductsController : ControllerBase
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Invalidate cache
         await InvalidateProductCacheAsync(cancellationToken);
 
         return Ok(new { message = "Inventory updated." });
     }
 
-    [HttpGet("{id}/prices")]
-    public async Task<IActionResult> GetPrices(Guid id, CancellationToken cancellationToken)
+    [HttpGet("price/{countryId}/{id}")]
+    public async Task<IActionResult> GetProductPriceByCountry(Guid id, Guid countryId, CancellationToken cancellationToken)
     {
-        var prices = await _unitOfWork.ProductPrices.Query()
-            .Include(pp => pp.Country)
-            .Where(pp => pp.ProductId == id)
-            .Select(pp => new { Country = pp.Country.Name, pp.CountryId, pp.Price })
-            .ToListAsync(cancellationToken);
+        var product = await _unitOfWork.Products.GetByIdAsync(id, cancellationToken);
+        if (product is null)
+            return NotFound();
 
-        return Ok(prices);
+        var price = await _unitOfWork.ProductPrices.Query()
+            .Where(pp => pp.ProductId == id && pp.CountryId == countryId)
+            .Select(pp => pp.Price)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (price == 0)
+            price = product.BasePrice;
+
+        var country = await _unitOfWork.Countries.GetByIdAsync(countryId, cancellationToken);
+
+        return Ok(new
+        {
+            ProductId = id,
+            CountryId = countryId,
+            CountryName = country?.Name ?? "Unknown",
+            Price = price,
+            Currency = country?.Currency ?? "EGP"
+        });
     }
 
-    [HttpGet("{id}/inventory")]
-    public async Task<IActionResult> GetInventory(Guid id, CancellationToken cancellationToken)
+    [HttpPut("price/{countryId}/{id}")]
+    [Authorize(Roles = "Admin,StoreManager")]
+    public async Task<IActionResult> SetProductPriceByCountry(Guid id, Guid countryId, [FromBody] SetPriceRequest request, CancellationToken cancellationToken)
     {
-        var stock = await _unitOfWork.Inventories.Query()
-            .Include(i => i.Country)
-            .Where(i => i.ProductId == id)
-            .Select(i => new { Country = i.Country.Name, i.CountryId, i.Quantity, i.UpdatedAt })
-            .ToListAsync(cancellationToken);
+        var product = await _unitOfWork.Products.GetByIdAsync(id, cancellationToken);
+        if (product is null)
+            return NotFound();
 
-        return Ok(stock);
+        var country = await _unitOfWork.Countries.GetByIdAsync(countryId, cancellationToken);
+        if (country is null)
+            return BadRequest(new { message = "Country not found." });
+
+        var existing = await _unitOfWork.ProductPrices.Query()
+            .FirstOrDefaultAsync(pp => pp.ProductId == id && pp.CountryId == countryId, cancellationToken);
+
+        if (existing is null)
+        {
+            var newPrice = new ProductPrice
+            {
+                Id = Guid.NewGuid(),
+                ProductId = id,
+                CountryId = countryId,
+                Price = request.Price
+            };
+            await _unitOfWork.ProductPrices.AddAsync(newPrice, cancellationToken);
+        }
+        else
+        {
+            existing.Price = request.Price;
+            _unitOfWork.ProductPrices.Update(existing);
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            ProductId = id,
+            CountryId = countryId,
+            CountryName = country.Name,
+            Price = request.Price,
+            Currency = country.Currency,
+            Message = "Price updated successfully."
+        });
+    }
+
+    [HttpGet("prices-by-country")]
+    public async Task<IActionResult> GetProductsWithPricesByCountry([FromQuery] Guid? countryId, CancellationToken cancellationToken)
+    {
+        var query = from p in _unitOfWork.Products.Query()
+                    join pp in _unitOfWork.ProductPrices.Query() on p.Id equals pp.ProductId into prices
+                    from pp in prices.DefaultIfEmpty()
+                    select new
+                    {
+                        p.Id,
+                        p.NameEn,
+                        p.NameAr,
+                        p.BasePrice,
+                        CountryId = pp != null ? pp.CountryId : (Guid?)null,
+                        CountryName = pp != null ? pp.Country.Name : null,
+                        Price = pp != null ? pp.Price : (decimal?)null,
+                        Currency = pp != null ? pp.Country.Currency : null
+                    };
+
+        var results = await query.ToListAsync(cancellationToken);
+
+        var grouped = results
+            .GroupBy(x => new { x.Id, x.NameEn, x.NameAr, x.BasePrice })
+            .Select(g => new
+            {
+                g.Key.Id,
+                g.Key.NameEn,
+                g.Key.NameAr,
+                g.Key.BasePrice,
+                CountryPrices = g.Where(x => x.CountryId.HasValue)
+                    .Select(x => new
+                    {
+                        CountryId = x.CountryId.Value,
+                        CountryName = x.CountryName,
+                        Price = x.Price ?? 0,
+                        Currency = x.Currency ?? "EGP"
+                    })
+            })
+            .ToList();
+
+        if (countryId.HasValue)
+        {
+            grouped = grouped.Select(g => new
+            {
+                g.Id,
+                g.NameEn,
+                g.NameAr,
+                g.BasePrice,
+                CountryPrices = g.CountryPrices.Where(cp => cp.CountryId == countryId.Value)
+            }).ToList();
+        }
+
+        return Ok(grouped);
     }
 
     private async Task InvalidateProductCacheAsync(CancellationToken cancellationToken)
     {
-        // Increment version to invalidate all list caches
         var currentVersion = await _cache.GetStringAsync(VersionKey, cancellationToken) ?? "1";
         var newVersion = (int.Parse(currentVersion) + 1).ToString();
         await _cache.SetStringAsync(VersionKey, newVersion, new DistributedCacheEntryOptions

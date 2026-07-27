@@ -39,7 +39,7 @@ public class BankTransfersController : ControllerBase
         var userId = GetCurrentUserId();
 
         var order = await _unitOfWork.Orders.Query()
-            .FirstOrDefaultAsync(o => o.Id == orderId && o.UserId == userId, cancellationToken);
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.CustomerId == userId, cancellationToken);
 
         if (order is null)
             return NotFound(new { message = "Order not found." });
@@ -98,12 +98,13 @@ public class BankTransfersController : ControllerBase
 
         var transfer = await _unitOfWork.BankTransfers.Query()
             .Include(bt => bt.Order)
+                .ThenInclude(o => o.Customer)
             .FirstOrDefaultAsync(bt => bt.OrderId == orderId, cancellationToken);
 
         if (transfer is null)
             return NotFound();
 
-        if (!isStaff && transfer.Order.UserId != userId)
+        if (!isStaff && transfer.Order.CustomerId != userId)
             return Forbid();
 
         return Ok(new
@@ -114,7 +115,8 @@ public class BankTransfersController : ControllerBase
             Status = transfer.Status.ToString(),
             transfer.SubmittedAt,
             transfer.ReviewedAt,
-            transfer.RejectionReason
+            transfer.RejectionReason,
+            CustomerName = transfer.Order.Customer?.Name ?? "Guest"
         });
     }
 
@@ -124,14 +126,14 @@ public class BankTransfersController : ControllerBase
     {
         var pending = await _unitOfWork.BankTransfers.Query()
             .Include(bt => bt.Order)
-                .ThenInclude(o => o.User)
+                .ThenInclude(o => o.Customer)
             .Where(bt => bt.Status == BankTransferStatus.PendingReview)
             .OrderBy(bt => bt.SubmittedAt)
             .Select(bt => new
             {
                 bt.Id,
                 bt.OrderId,
-                CustomerName = bt.Order.User != null ? bt.Order.User.Name : bt.Order.GuestName,
+                CustomerName = bt.Order.Customer != null ? bt.Order.Customer.Name : "Guest",
                 bt.ProofImageUrl,
                 bt.SubmittedAt
             })
@@ -164,13 +166,12 @@ public class BankTransfersController : ControllerBase
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Send notification to the order owner (user or guest)
-        if (transfer.Order.UserId.HasValue)
+        if (transfer.Order.CustomerId.HasValue)
         {
             await _unitOfWork.Notifications.AddAsync(new Notification
             {
                 Id = Guid.NewGuid(),
-                UserId = transfer.Order.UserId.Value,
+                UserId = transfer.Order.CustomerId.Value,
                 Type = NotificationType.BankTransferReviewed,
                 Message = request.Approved
                     ? "Your bank transfer was approved. Your order is now confirmed."
