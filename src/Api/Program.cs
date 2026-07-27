@@ -99,7 +99,7 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
 builder.Services.AddScoped<IFileStorageService, CloudinaryFileStorageService>();
 builder.Services.AddScoped<IInvoicePdfGenerator, QuestPdfInvoiceGenerator>();
-builder.Services.AddScoped<IOrderNumberGenerator, OrderNumberGenerator>();
+builder.Services.AddScoped<IOrderNumberGenerator, OrderNumberGenerator>(); // <--- ADDED
 
 // ==================== GeoLocation Service ====================
 builder.Services.AddGeoLocationService(builder.Configuration);
