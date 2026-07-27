@@ -111,13 +111,6 @@ public class InvoicesController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = invoice.Id }, invoice);
     }
 
-    private Guid GetCurrentUserId()
-    {
-        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("nameid")?.Value;
-        return userId is not null && Guid.TryParse(userId, out var id) ? id : Guid.Empty;
-    }
-}
-
     [HttpGet("{id}/pdf")]
     [Authorize]
     public async Task<IActionResult> GetPdf(Guid id, CancellationToken cancellationToken)
@@ -144,3 +137,10 @@ public class InvoicesController : ControllerBase
 
         return File(pdfBytes, "application/pdf", $"{invoice.InvoiceNumber}.pdf");
     }
+
+    private Guid GetCurrentUserId()
+    {
+        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("nameid")?.Value;
+        return userId is not null && Guid.TryParse(userId, out var id) ? id : Guid.Empty;
+    }
+}

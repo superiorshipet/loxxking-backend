@@ -38,7 +38,7 @@ public class CategoriesController : ControllerBase
         }
 
         // Query from database
-        var categories = await _unitOfWork.Categories.Query()
+        var categoryList = await _unitOfWork.Categories.Query()
             .Select(c => new CategoryDto(c.Id, c.NameAr, c.NameEn))
             .ToListAsync(cancellationToken);
 
@@ -47,9 +47,9 @@ public class CategoriesController : ControllerBase
         {
             AbsoluteExpirationRelativeToNow = CacheTtl
         };
-        await _cache.SetStringAsync(CacheKey, JsonSerializer.Serialize(categories), options, cancellationToken);
+        await _cache.SetStringAsync(CacheKey, JsonSerializer.Serialize(categoryList), options, cancellationToken);
 
-        return Ok(categories);
+        return Ok(categoryList);
     }
 
     [HttpPost]

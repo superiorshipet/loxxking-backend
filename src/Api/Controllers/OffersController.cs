@@ -37,8 +37,8 @@ public class OffersController : ControllerBase
             var cached = await _cache.GetStringAsync(ActiveOffersCacheKey, cancellationToken);
             if (cached is not null)
             {
-                var offers = JsonSerializer.Deserialize<List<OfferDto>>(cached);
-                return Ok(offers);
+                var cachedOffers = JsonSerializer.Deserialize<List<OfferDto>>(cached);
+                return Ok(cachedOffers);
             }
         }
 
@@ -50,7 +50,7 @@ public class OffersController : ControllerBase
             query = query.Where(o => o.StartDate <= now && o.EndDate >= now);
         }
 
-        var offers = await query
+        var offersList = await query
             .OrderByDescending(o => o.StartDate)
             .Select(o => new OfferDto(
                 o.Id,
@@ -66,10 +66,10 @@ public class OffersController : ControllerBase
         if (activeOnly)
         {
             var options = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl };
-            await _cache.SetStringAsync(ActiveOffersCacheKey, JsonSerializer.Serialize(offers), options, cancellationToken);
+            await _cache.SetStringAsync(ActiveOffersCacheKey, JsonSerializer.Serialize(offersList), options, cancellationToken);
         }
 
-        return Ok(offers);
+        return Ok(offersList);
     }
 
     [HttpGet("{id}")]

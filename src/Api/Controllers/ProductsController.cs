@@ -70,8 +70,8 @@ public class ProductsController : ControllerBase
         var cached = await _cache.GetStringAsync(cacheKey, cancellationToken);
         if (cached is not null)
         {
-            var result = JsonSerializer.Deserialize<object>(cached);
-            return Ok(result);
+            var cachedResult = JsonSerializer.Deserialize<object>(cached);
+            return Ok(cachedResult);
         }
 
         // Query from database
@@ -104,17 +104,17 @@ public class ProductsController : ControllerBase
             })
             .ToListAsync(cancellationToken);
 
-        object result;
+        object finalResult;
 
         if (!countryId.HasValue)
         {
-            result = new { data = products, totalCount, page, pageSize, totalPages = (int)Math.Ceiling(totalCount / (double)pageSize) };
+            finalResult = new { data = products, totalCount, page, pageSize, totalPages = (int)Math.Ceiling(totalCount / (double)pageSize) };
             
             // Cache
             var options = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl };
-            await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(result), options, cancellationToken);
+            await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(finalResult), options, cancellationToken);
             
-            return Ok(result);
+            return Ok(finalResult);
         }
 
         var productIds = products.Select(p => p.Id).ToList();
@@ -138,13 +138,13 @@ public class ProductsController : ControllerBase
             stock.TryGetValue(p.Id, out var qty) ? qty : 0
         ));
 
-        result = new { data = enriched, totalCount, page, pageSize, totalPages = (int)Math.Ceiling(totalCount / (double)pageSize) };
+        finalResult = new { data = enriched, totalCount, page, pageSize, totalPages = (int)Math.Ceiling(totalCount / (double)pageSize) };
 
         // Cache
         var cacheOptions = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl };
-        await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(result), cacheOptions, cancellationToken);
+        await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(finalResult), cacheOptions, cancellationToken);
 
-        return Ok(result);
+        return Ok(finalResult);
     }
 
     [HttpGet("{id}")]
@@ -157,8 +157,8 @@ public class ProductsController : ControllerBase
         var cached = await _cache.GetStringAsync(cacheKey, cancellationToken);
         if (cached is not null)
         {
-            var result = JsonSerializer.Deserialize<ProductDetailDto>(cached);
-            return Ok(result);
+            var cachedResult = JsonSerializer.Deserialize<ProductDetailDto>(cached);
+            return Ok(cachedResult);
         }
 
         var product = await _unitOfWork.Products.Query()
@@ -186,7 +186,7 @@ public class ProductsController : ControllerBase
                 .FirstOrDefaultAsync(cancellationToken);
         }
 
-        var result = new ProductDetailDto(
+        var finalResult = new ProductDetailDto(
             product.Id,
             product.NameAr,
             product.NameEn,
@@ -199,9 +199,9 @@ public class ProductsController : ControllerBase
 
         // Cache
         var options = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl };
-        await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(result), options, cancellationToken);
+        await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(finalResult), options, cancellationToken);
 
-        return Ok(result);
+        return Ok(finalResult);
     }
 
     [HttpPost]

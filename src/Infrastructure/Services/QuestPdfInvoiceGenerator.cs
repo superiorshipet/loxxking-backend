@@ -77,13 +77,12 @@ public class QuestPdfInvoiceGenerator : IInvoicePdfGenerator
                             {
                                 foreach (var item in invoice.Order.OrderItems)
                                 {
-                                    // Calculate unit price from total and quantity
-                                    var unitPrice = item.Quantity > 0 ? item.TotalPrice / item.Quantity : 0;
+                                    var totalPrice = item.Quantity * item.PriceAtOrder;
                                     
                                     table.Cell().Padding(5).Text(item.Product?.NameEn ?? "Product");
                                     table.Cell().Padding(5).Text(item.Quantity.ToString()).AlignRight();
-                                    table.Cell().Padding(5).Text($"{unitPrice:C}").AlignRight();
-                                    table.Cell().Padding(5).Text($"{item.TotalPrice:C}").AlignRight();
+                                    table.Cell().Padding(5).Text($"{item.PriceAtOrder:C}").AlignRight();
+                                    table.Cell().Padding(5).Text($"{totalPrice:C}").AlignRight();
                                 }
                             }
                             else
