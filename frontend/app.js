@@ -2,7 +2,7 @@
 // LoxxKing Admin Dashboard - Main JavaScript
 // ============================================================
 
-const API_BASE = 'http://localhost:5196/api';
+const API_BASE = "https://loxxking-backend-production.up.railway.app/api";
 let currentToken = null;
 let currentUser = null;
 
