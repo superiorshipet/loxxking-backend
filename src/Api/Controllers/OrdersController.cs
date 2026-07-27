@@ -1,6 +1,6 @@
+using Application.Common.Interfaces;
 using Domain.Entities;
 using Domain.Enums;
-using Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -12,11 +12,11 @@ namespace Api.Controllers;
 [Authorize]
 public class OrdersController : ControllerBase
 {
-    private readonly AppDbContext _dbContext;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public OrdersController(AppDbContext dbContext)
+    public OrdersController(IUnitOfWork unitOfWork)
     {
-        _dbContext = dbContext;
+        _unitOfWork = unitOfWork;
     }
 
     public record OrderItemRequest(Guid ProductId, int Quantity);
@@ -24,10 +24,6 @@ public class OrdersController : ControllerBase
     public record UpdateOrderStatusRequest(OrderStatus Status);
     public record UpdateOrderRequest(string Address, string Phone, string? Notes);
 
-    // ------------------------------------------------------------
-    // GET /api/orders?status=&countryId=&paymentMethod=&search=&dateFrom=&dateTo=&page=&pageSize=
-    // متاح لـ Admin, StoreManager, SalesEmployee (لوحة التحكم الداخلية)
-    // ------------------------------------------------------------
     [HttpGet]
     [Authorize(Roles = "Admin,StoreManager,SalesEmployee")]
     public async Task<IActionResult> GetOrders(
@@ -44,7 +40,7 @@ public class OrdersController : ControllerBase
         page = page < 1 ? 1 : page;
         pageSize = pageSize is < 1 or > 100 ? 10 : pageSize;
 
-        var query = _dbContext.Orders
+        var query = _unitOfWork.Orders.Query()
             .Include(o => o.Customer)
             .Include(o => o.Country)
             .AsQueryable();
@@ -105,14 +101,10 @@ public class OrdersController : ControllerBase
         });
     }
 
-    // ------------------------------------------------------------
-    // GET /api/orders/{id}
-    // متاح للموظفين، وللعميل صاحب الطلب نفسه بس
-    // ------------------------------------------------------------
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(Guid id, CancellationToken cancellationToken)
     {
-        var order = await _dbContext.Orders
+        var order = await _unitOfWork.Orders.Query()
             .Include(o => o.Customer)
             .Include(o => o.Country)
             .Include(o => o.OrderItems).ThenInclude(i => i.Product)
@@ -147,9 +139,6 @@ public class OrdersController : ControllerBase
         });
     }
 
-    // ------------------------------------------------------------
-    // POST /api/orders — العميل بينشئ طلب
-    // ------------------------------------------------------------
     [HttpPost]
     [Authorize(Roles = "Customer")]
     public async Task<IActionResult> Create([FromBody] CreateOrderRequest request, CancellationToken cancellationToken)
@@ -158,7 +147,7 @@ public class OrdersController : ControllerBase
             return BadRequest(new { message = "Order must contain at least one item." });
 
         var customerId = GetCurrentUserId();
-        var customer = await _dbContext.Users.FindAsync(new object[] { customerId }, cancellationToken);
+        var customer = await _unitOfWork.Users.GetByIdAsync(customerId, cancellationToken);
         if (customer is null)
             return Unauthorized();
 
@@ -178,7 +167,7 @@ public class OrdersController : ControllerBase
         decimal total = 0;
         foreach (var item in request.Items)
         {
-            var price = await _dbContext.ProductPrices
+            var price = await _unitOfWork.ProductPrices.Query()
                 .Where(p => p.ProductId == item.ProductId && p.CountryId == customer.CountryId)
                 .Select(p => (decimal?)p.Price)
                 .FirstOrDefaultAsync(cancellationToken);
@@ -186,7 +175,7 @@ public class OrdersController : ControllerBase
             if (price is null)
                 return BadRequest(new { message = $"Product {item.ProductId} has no price for your country." });
 
-            var inventory = await _dbContext.Inventories
+            var inventory = await _unitOfWork.Inventories.Query()
                 .FirstOrDefaultAsync(i => i.ProductId == item.ProductId && i.CountryId == customer.CountryId, cancellationToken);
 
             if (inventory is null || inventory.Quantity < item.Quantity)
@@ -194,6 +183,7 @@ public class OrdersController : ControllerBase
 
             inventory.Quantity -= item.Quantity;
             inventory.UpdatedAt = DateTime.UtcNow;
+            _unitOfWork.Inventories.Update(inventory);
 
             order.OrderItems.Add(new OrderItem
             {
@@ -207,62 +197,56 @@ public class OrdersController : ControllerBase
         }
 
         order.TotalAmount = total;
-        _dbContext.Orders.Add(order);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.Orders.AddAsync(order, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { id = order.Id }, new { order.Id, order.TotalAmount });
     }
 
-    // ------------------------------------------------------------
-    // PATCH /api/orders/{id}/status — Admin, StoreManager, SalesEmployee
-    // ------------------------------------------------------------
     [HttpPatch("{id}/status")]
     [Authorize(Roles = "Admin,StoreManager,SalesEmployee")]
     public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] UpdateOrderStatusRequest request, CancellationToken cancellationToken)
     {
-        var order = await _dbContext.Orders.FirstOrDefaultAsync(o => o.Id == id, cancellationToken);
+        var order = await _unitOfWork.Orders.GetByIdAsync(id, cancellationToken);
         if (order is null)
             return NotFound();
 
         var oldStatus = order.Status;
         order.Status = request.Status;
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        _unitOfWork.Orders.Update(order);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // إشعار تلقائي للعميل بتغيير حالة طلبه
         if (oldStatus != request.Status)
         {
-            _dbContext.Notifications.Add(new Notification
+            await _unitOfWork.Notifications.AddAsync(new Notification
             {
                 Id = Guid.NewGuid(),
                 UserId = order.CustomerId,
                 Type = NotificationType.OrderUpdate,
                 Message = $"Your order status changed to {request.Status}.",
                 CreatedAt = DateTime.UtcNow
-            });
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            }, cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
         return Ok(new { order.Id, Status = order.Status.ToString() });
     }
 
-    // ------------------------------------------------------------
-    // PUT /api/orders/{id} — Admin ONLY. كل تغيير بيتسجل في ORDER_EDIT_LOG
-    // ------------------------------------------------------------
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateOrderRequest request, CancellationToken cancellationToken)
     {
-        var order = await _dbContext.Orders.FirstOrDefaultAsync(o => o.Id == id, cancellationToken);
+        var order = await _unitOfWork.Orders.GetByIdAsync(id, cancellationToken);
         if (order is null)
             return NotFound();
 
         var editorId = GetCurrentUserId();
         var now = DateTime.UtcNow;
 
-        void LogIfChanged(string fieldName, string? oldValue, string? newValue)
+        async Task LogIfChangedAsync(string fieldName, string? oldValue, string? newValue)
         {
             if (oldValue == newValue) return;
-            _dbContext.OrderEditLogs.Add(new OrderEditLog
+            await _unitOfWork.OrderEditLogs.AddAsync(new OrderEditLog
             {
                 Id = Guid.NewGuid(),
                 OrderId = order.Id,
@@ -271,30 +255,28 @@ public class OrdersController : ControllerBase
                 OldValue = oldValue,
                 NewValue = newValue,
                 EditedAt = now
-            });
+            }, cancellationToken);
         }
 
-        LogIfChanged(nameof(order.Address), order.Address, request.Address);
-        LogIfChanged(nameof(order.Phone), order.Phone, request.Phone);
-        LogIfChanged(nameof(order.Notes), order.Notes, request.Notes);
+        await LogIfChangedAsync(nameof(order.Address), order.Address, request.Address);
+        await LogIfChangedAsync(nameof(order.Phone), order.Phone, request.Phone);
+        await LogIfChangedAsync(nameof(order.Notes), order.Notes, request.Notes);
 
         order.Address = request.Address;
         order.Phone = request.Phone;
         order.Notes = request.Notes;
+        _unitOfWork.Orders.Update(order);
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return Ok(new { order.Id, message = "Order updated and changes logged." });
     }
 
-    // ------------------------------------------------------------
-    // GET /api/orders/{id}/edit-logs — Admin ONLY
-    // ------------------------------------------------------------
     [HttpGet("{id}/edit-logs")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> GetEditLogs(Guid id, CancellationToken cancellationToken)
     {
-        var logs = await _dbContext.OrderEditLogs
+        var logs = await _unitOfWork.OrderEditLogs.Query()
             .Include(l => l.Editor)
             .Where(l => l.OrderId == id)
             .OrderByDescending(l => l.EditedAt)
@@ -312,9 +294,6 @@ public class OrdersController : ControllerBase
         return Ok(logs);
     }
 
-    // ------------------------------------------------------------
-    // Helpers
-    // ------------------------------------------------------------
     private Guid GetCurrentUserId()
     {
         var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("nameid")?.Value;

@@ -21,6 +21,8 @@ builder.Services.AddStackExchangeRedisCache(options => {
     options.Configuration = builder.Configuration.GetConnectionString("RedisConnection") ?? "localhost:6379";
 });
 
+builder.Services.AddScoped<Application.Common.Interfaces.IUnitOfWork, Infrastructure.Repositories.UnitOfWork>();
+
 builder.Services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
 
 builder.Services.AddControllers();
