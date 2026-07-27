@@ -484,7 +484,7 @@
                                     <div class="loading-state">Select a conversation thread to view messages</div>
                                 </div>
                                 <div class="chat-input-row margin-top-md" id="admin-chat-input-row" style="display:none;">
-                                    <input type="text" id="admin-chat-message-input" placeholder="Type reply message...">
+                                    <input type="text" id="admin-chat-message-input" placeholder="Type reply message..." onkeydown="if(event.key==='Enter')sendAdminChatMessage()">
                                     <button class="btn btn-primary" onclick="sendAdminChatMessage()">Send</button>
                                 </div>
                             </div>
@@ -700,7 +700,7 @@
                         <div class="chat-msg system">👋 Hello! How can we help you today? Send a message below.</div>
                     </div>
                     <div class="chat-input-row margin-top-md">
-                        <input type="text" id="customer-chat-input" placeholder="Type your message here...">
+                        <input type="text" id="customer-chat-input" placeholder="Type your message here..." onkeydown="if(event.key==='Enter')sendCustomerChatMessage()">
                         <button class="btn btn-primary" onclick="sendCustomerChatMessage()">Send</button>
                     </div>
                 </div>
