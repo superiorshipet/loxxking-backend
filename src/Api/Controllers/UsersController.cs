@@ -6,6 +6,7 @@ using Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace Api.Controllers;
 
@@ -20,6 +21,12 @@ public class UsersController : ControllerBase
     {
         _unitOfWork = unitOfWork;
     }
+
+    public record CreateStaffRequest(string Name, string Email, string Phone, string Password, string CountryName);
+    public record UpdateStaffRequest(string Name, string Email, string Phone, string CountryName);
+    public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+    public record ResetPasswordRequest(Guid UserId, string NewPassword);
+    public record AdminChangePasswordRequest(Guid UserId, string NewPassword);
 
     [HttpPost("admin/create-manager")]
     [Authorize(Roles = "Admin")]
@@ -65,6 +72,7 @@ public class UsersController : ControllerBase
             CountryId = country.Id,
             Role = role,
             IsActive = true,
+            PreferredLanguage = "en",
             CreatedAt = DateTime.UtcNow
         };
 
@@ -140,16 +148,71 @@ public class UsersController : ControllerBase
             })
             .ToListAsync(cancellationToken);
 
-        var response = new PaginatedResponse<StaffResponse>
+        return Ok(new PaginatedResponse<StaffResponse>
         {
             Data = staff,
             TotalCount = totalCount,
             Page = page,
             PageSize = pageSize,
             TotalPages = (int)Math.Ceiling(totalCount / (double)pageSize)
-        };
+        });
+    }
 
-        return Ok(response);
+    [HttpPut("staff/{id}")]
+    [Authorize(Roles = "Admin,StoreManager")]
+    public async Task<IActionResult> UpdateStaff(Guid id, [FromBody] UpdateStaffRequest request, CancellationToken cancellationToken)
+    {
+        var user = await _unitOfWork.Users.GetByIdAsync(id, cancellationToken);
+        
+        if (user is null)
+            return NotFound(new { message = "User not found." });
+
+        if (user.Role != UserRole.StoreManager && user.Role != UserRole.SalesEmployee)
+            return BadRequest(new { message = "Can only update staff members." });
+
+        if (user.Email != request.Email)
+        {
+            var emailExists = await _unitOfWork.Users.Query()
+                .AnyAsync(u => u.Email.ToLower() == request.Email.ToLower() && u.Id != id, cancellationToken);
+            
+            if (emailExists)
+                return BadRequest(new { message = "Email already registered." });
+        }
+
+        if (user.Phone != request.Phone)
+        {
+            var phoneExists = await _unitOfWork.Users.Query()
+                .AnyAsync(u => u.Phone == request.Phone && u.Id != id, cancellationToken);
+            
+            if (phoneExists)
+                return BadRequest(new { message = "Phone number already registered." });
+        }
+
+        var country = await _unitOfWork.Countries.Query()
+            .FirstOrDefaultAsync(c => c.Name.ToLower() == request.CountryName.ToLower(), cancellationToken);
+
+        if (country is null)
+            return BadRequest(new { message = $"Country '{request.CountryName}' not found." });
+
+        user.Name = request.Name;
+        user.Email = request.Email;
+        user.Phone = request.Phone;
+        user.CountryId = country.Id;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        _unitOfWork.Users.Update(user);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            user.Id,
+            user.Name,
+            user.Email,
+            user.Phone,
+            Role = user.Role.ToString(),
+            Country = country.Name,
+            Message = "Staff member updated successfully."
+        });
     }
 
     [HttpPatch("staff/{id}/toggle-status")]
@@ -172,13 +235,12 @@ public class UsersController : ControllerBase
         _unitOfWork.Users.Update(user);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var status = user.IsActive ? "activated" : "deactivated";
         return Ok(new 
         { 
             user.Id, 
             user.Name,
             user.IsActive,
-            Message = $"User {status} successfully."
+            Message = $"User {(user.IsActive ? "activated" : "deactivated")} successfully."
         });
     }
 
@@ -201,7 +263,33 @@ public class UsersController : ControllerBase
         _unitOfWork.Users.Remove(user);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return NoContent();
+        return Ok(new { message = $"User '{user.Name}' deleted successfully." });
+    }
+
+    [HttpDelete("{id}")]
+    [Authorize(Roles = "Admin,StoreManager")]
+    public async Task<IActionResult> DeleteAnyUser(Guid id, CancellationToken cancellationToken)
+    {
+        var user = await _unitOfWork.Users.GetByIdAsync(id, cancellationToken);
+        
+        if (user is null)
+            return NotFound(new { message = "User not found." });
+
+        var currentUserId = GetCurrentUserId();
+        if (user.Id == currentUserId)
+            return BadRequest(new { message = "Cannot delete your own account." });
+
+        if (user.Role == UserRole.Admin)
+        {
+            var currentUser = await _unitOfWork.Users.GetByIdAsync(currentUserId, cancellationToken);
+            if (currentUser?.Role != UserRole.Admin)
+                return BadRequest(new { message = "Only Admin can delete another Admin." });
+        }
+
+        _unitOfWork.Users.Remove(user);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { message = $"User '{user.Name}' deleted successfully." });
     }
 
     [HttpPost("change-password")]
@@ -221,16 +309,6 @@ public class UsersController : ControllerBase
 
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
         _unitOfWork.Users.Update(user);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        await _unitOfWork.Notifications.AddAsync(new Notification
-        {
-            Id = Guid.NewGuid(),
-            UserId = user.Id,
-            Type = NotificationType.AccountUpdate,
-            Message = "Your password has been changed successfully.",
-            CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return Ok(new { message = "Password changed successfully." });
@@ -259,16 +337,6 @@ public class UsersController : ControllerBase
         _unitOfWork.Users.Update(user);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        await _unitOfWork.Notifications.AddAsync(new Notification
-        {
-            Id = Guid.NewGuid(),
-            UserId = user.Id,
-            Type = NotificationType.AccountUpdate,
-            Message = $"Your password has been reset by {User.Identity?.Name ?? "Admin"}.",
-            CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
         return Ok(new { message = $"Password reset successfully for {user.Name}." });
     }
 
@@ -292,22 +360,14 @@ public class UsersController : ControllerBase
         _unitOfWork.Users.Update(user);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        await _unitOfWork.Notifications.AddAsync(new Notification
-        {
-            Id = Guid.NewGuid(),
-            UserId = user.Id,
-            Type = NotificationType.AccountUpdate,
-            Message = $"Your password has been changed by an Administrator.",
-            CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
         return Ok(new { message = $"Password changed successfully for {user.Name}." });
     }
 
     private Guid GetCurrentUserId()
     {
-        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("nameid")?.Value;
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+            ?? User.FindFirst("nameid")?.Value 
+            ?? User.FindFirst("sub")?.Value;
         return userId is not null && Guid.TryParse(userId, out var id) ? id : Guid.Empty;
     }
 }

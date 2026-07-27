@@ -22,13 +22,21 @@ builder.Host.UseSerilog();
 // QuestPDF license
 QuestPDF.Settings.License = LicenseType.Community;
 
-// Database
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+// Database - Read from environment variable
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
+    ?? Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection")
+    ?? throw new InvalidOperationException("Database connection string is required");
 
-// Redis Cache
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(connectionString));
+
+// Redis Cache - Read from environment variable
+var redisConnection = builder.Configuration.GetConnectionString("RedisConnection") 
+    ?? Environment.GetEnvironmentVariable("ConnectionStrings__RedisConnection")
+    ?? "localhost:6379";
+
 builder.Services.AddStackExchangeRedisCache(options => {
-    options.Configuration = builder.Configuration.GetConnectionString("RedisConnection") ?? "localhost:6379";
+    options.Configuration = redisConnection;
 });
 
 // Services (DI)
@@ -39,10 +47,18 @@ builder.Services.AddScoped<IInvoicePdfGenerator, QuestPdfInvoiceGenerator>();
 
 // Controllers
 builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
 
-// CORS
+// CORS - Read from environment
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-    ?? Array.Empty<string>();
+    ?? Environment.GetEnvironmentVariable("Cors__AllowedOrigins")?.Split(',')
+    ?? new[] { 
+        "http://localhost:5173", 
+        "http://localhost:3000",
+        "https://loxxking.vercel.app",
+        "https://loxxking.netlify.app"
+    };
 
 builder.Services.AddCors(options =>
 {
@@ -75,7 +91,9 @@ builder.Services.AddRateLimiter(options =>
 });
 
 // JWT Authentication
-var jwtSecret = builder.Configuration["Jwt:Secret"] ?? "THIS_IS_A_DEV_ONLY_SECRET_KEY_REPLACE_IN_PRODUCTION_LONG_MINIMUM";
+var jwtSecret = builder.Configuration["Jwt:Secret"] 
+    ?? Environment.GetEnvironmentVariable("Jwt__Secret")
+    ?? throw new InvalidOperationException("JWT Secret is required");
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -86,8 +104,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidAudience = builder.Configuration["Jwt:Audience"],
+            ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "LoxxKingApi",
+            ValidAudience = builder.Configuration["Jwt:Audience"] ?? "LoxxKingClient",
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret))
         };
     });
@@ -96,17 +114,30 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
-// Migration + Seed
-using (var scope = app.Services.CreateScope())
+// Migration + Seed (only if in development or with ENV flag)
+if (app.Environment.IsDevelopment() || Environment.GetEnvironmentVariable("RUN_MIGRATIONS") == "true")
 {
-    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await dbContext.Database.MigrateAsync();
-    await DbSeeder.SeedCountriesAsync(dbContext);
-    await DbSeeder.SeedAdminAsync(dbContext); // Add admin seed
+    using (var scope = app.Services.CreateScope())
+    {
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await dbContext.Database.MigrateAsync();
+        await DbSeeder.SeedCountriesAsync(dbContext);
+        await DbSeeder.SeedAdminAsync(dbContext);
+    }
 }
 
 // Middleware pipeline
 app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Loxx King API V1");
+        c.RoutePrefix = string.Empty;
+    });
+}
 
 app.UseResponseCompression();
 app.UseHttpsRedirection();

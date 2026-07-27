@@ -1,0 +1,11 @@
+{
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "dotnet publish src/Api/Api.csproj -c Release -o /app/publish"
+  },
+  "deploy": {
+    "startCommand": "dotnet /app/publish/Api.dll",
+    "healthcheckPath": "/api/auth/countries",
+    "restartPolicyType": "ON_FAILURE"
+  }
+}

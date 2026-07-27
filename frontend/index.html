@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ar" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LoxxKing Admin Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>🏆 LoxxKing Admin Panel</h1>
+            <div id="auth-status">
+                <span id="user-info">غير مسجل الدخول</span>
+                <button id="logout-btn" style="display:none;" onclick="logout()">تسجيل خروج</button>
+            </div>
+        </header>
+
+        <!-- Login Section -->
+        <section id="login-section" class="card">
+            <h2>🔐 تسجيل الدخول</h2>
+            <div class="login-form">
+                <div class="form-group">
+                    <label>البريد الإلكتروني</label>
+                    <input type="email" id="login-email" value="admin@loxxking.com">
+                </div>
+                <div class="form-group">
+                    <label>كلمة المرور</label>
+                    <input type="password" id="login-password" value="Admin@123456">
+                </div>
+                <button onclick="login()" class="btn btn-primary">تسجيل الدخول</button>
+                <div id="login-message" class="message"></div>
+            </div>
+        </section>
+
+        <!-- Dashboard -->
+        <section id="dashboard" style="display:none;">
+            <!-- Stats Cards -->
+            <div class="stats-grid" id="stats-grid">
+                <div class="stat-card">
+                    <h3>👥 المستخدمين</h3>
+                    <span id="stat-users">-</span>
+                </div>
+                <div class="stat-card">
+                    <h3>📦 المنتجات</h3>
+                    <span id="stat-products">-</span>
+                </div>
+                <div class="stat-card">
+                    <h3>📋 الطلبات</h3>
+                    <span id="stat-orders">-</span>
+                </div>
+                <div class="stat-card">
+                    <h3>💰 الإيرادات</h3>
+                    <span id="stat-revenue">-</span>
+                </div>
+                <div class="stat-card">
+                    <h3>⭐ التقييمات</h3>
+                    <span id="stat-reviews">-</span>
+                </div>
+            </div>
+
+            <!-- Navigation Tabs -->
+            <nav class="tabs">
+                <button class="tab-btn active" onclick="showTab('users')">👥 المستخدمين</button>
+                <button class="tab-btn" onclick="showTab('orders')">📋 الطلبات</button>
+                <button class="tab-btn" onclick="showTab('products')">📦 المنتجات</button>
+                <button class="tab-btn" onclick="showTab('categories')">📂 التصنيفات</button>
+                <button class="tab-btn" onclick="showTab('offers')">🎯 العروض</button>
+                <button class="tab-btn" onclick="showTab('staff')">👔 الموظفين</button>
+                <button class="tab-btn" onclick="showTab('site-visits')">📊 الزيارات</button>
+                <button class="tab-btn" onclick="showTab('notifications')">🔔 الإشعارات</button>
+                <button class="tab-btn" onclick="showTab('bank-transfers')">🏦 التحويلات</button>
+                <button class="tab-btn" onclick="showTab('invoices')">📄 الفواتير</button>
+                <button class="tab-btn" onclick="showTab('reviews')">⭐ التقييمات</button>
+            </nav>
+
+            <!-- Tab Content -->
+            <div id="tab-content" class="tab-content">
+                <!-- Users Tab -->
+                <div id="tab-users" class="tab-pane active">
+                    <h3>👥 جميع المستخدمين</h3>
+                    <button onclick="loadAllUsers()" class="btn btn-secondary">تحميل المستخدمين</button>
+                    <div id="users-list" class="data-list"></div>
+                </div>
+
+                <!-- Orders Tab -->
+                <div id="tab-orders" class="tab-pane">
+                    <h3>📋 الطلبات</h3>
+                    <div class="filter-row">
+                        <select id="order-status-filter">
+                            <option value="">كل الحالات</option>
+                            <option value="NewOrder">جديد</option>
+                            <option value="Prepared">تم التجهيز</option>
+                            <option value="Shipping">جاري التوصيل</option>
+                            <option value="Delivered">تم التوصيل</option>
+                            <option value="Cancelled">ملغي</option>
+                        </select>
+                        <input type="text" id="order-search" placeholder="بحث عن عميل...">
+                        <button onclick="loadOrders()" class="btn btn-secondary">تحميل الطلبات</button>
+                    </div>
+                    <div id="orders-list" class="data-list"></div>
+                </div>
+
+                <!-- Products Tab -->
+                <div id="tab-products" class="tab-pane">
+                    <h3>📦 المنتجات</h3>
+                    <button onclick="loadProducts()" class="btn btn-secondary">تحميل المنتجات</button>
+                    <div id="products-list" class="data-list"></div>
+                </div>
+
+                <!-- Categories Tab -->
+                <div id="tab-categories" class="tab-pane">
+                    <h3>📂 التصنيفات</h3>
+                    <div class="form-row">
+                        <input type="text" id="category-name-ar" placeholder="الاسم بالعربي">
+                        <input type="text" id="category-name-en" placeholder="الاسم بالإنجليزي">
+                        <button onclick="createCategory()" class="btn btn-success">إضافة تصنيف</button>
+                    </div>
+                    <button onclick="loadCategories()" class="btn btn-secondary">تحميل التصنيفات</button>
+                    <div id="categories-list" class="data-list"></div>
+                </div>
+
+                <!-- Offers Tab -->
+                <div id="tab-offers" class="tab-pane">
+                    <h3>🎯 العروض</h3>
+                    <button onclick="loadOffers()" class="btn btn-secondary">تحميل العروض النشطة</button>
+                    <div id="offers-list" class="data-list"></div>
+                </div>
+
+                <!-- Staff Tab -->
+                <div id="tab-staff" class="tab-pane">
+                    <h3>👔 إدارة الموظفين</h3>
+                    <div class="staff-forms">
+                        <div class="form-card">
+                            <h4>إضافة مدير متجر</h4>
+                            <input type="text" id="manager-name" placeholder="الاسم">
+                            <input type="email" id="manager-email" placeholder="البريد الإلكتروني">
+                            <input type="text" id="manager-phone" placeholder="رقم الهاتف">
+                            <input type="password" id="manager-password" placeholder="كلمة المرور">
+                            <input type="text" id="manager-country" placeholder="الدولة (مصر)">
+                            <button onclick="createManager()" class="btn btn-warning">إضافة مدير متجر</button>
+                        </div>
+                        <div class="form-card">
+                            <h4>إضافة موظف مبيعات</h4>
+                            <input type="text" id="employee-name" placeholder="الاسم">
+                            <input type="email" id="employee-email" placeholder="البريد الإلكتروني">
+                            <input type="text" id="employee-phone" placeholder="رقم الهاتف">
+                            <input type="password" id="employee-password" placeholder="كلمة المرور">
+                            <input type="text" id="employee-country" placeholder="الدولة (مصر)">
+                            <button onclick="createEmployee()" class="btn btn-info">إضافة موظف مبيعات</button>
+                        </div>
+                    </div>
+                    <button onclick="loadStaff()" class="btn btn-secondary">تحميل الموظفين</button>
+                    <div id="staff-list" class="data-list"></div>
+                </div>
+
+                <!-- Site Visits Tab -->
+                <div id="tab-site-visits" class="tab-pane">
+                    <h3>📊 زيارات الموقع</h3>
+                    <div class="stat-card">
+                        <span>زيارات اليوم:</span>
+                        <span id="today-count">-</span>
+                    </div>
+                    <button onclick="loadSiteVisits()" class="btn btn-secondary">تحميل الزيارات</button>
+                    <div id="site-visits-list" class="data-list"></div>
+                </div>
+
+                <!-- Notifications Tab -->
+                <div id="tab-notifications" class="tab-pane">
+                    <h3>🔔 الإشعارات</h3>
+                    <div class="filter-row">
+                        <button onclick="markAllNotificationsRead()" class="btn btn-success">تحديد الكل كمقروء</button>
+                    </div>
+                    <button onclick="loadNotifications()" class="btn btn-secondary">تحميل الإشعارات</button>
+                    <div id="notifications-list" class="data-list"></div>
+                </div>
+
+                <!-- Bank Transfers Tab -->
+                <div id="tab-bank-transfers" class="tab-pane">
+                    <h3>🏦 التحويلات البنكية</h3>
+                    <button onclick="loadBankTransfers()" class="btn btn-secondary">تحميل التحويلات المعلقة</button>
+                    <div id="bank-transfers-list" class="data-list"></div>
+                </div>
+
+                <!-- Invoices Tab -->
+                <div id="tab-invoices" class="tab-pane">
+                    <h3>📄 الفواتير</h3>
+                    <button onclick="loadInvoices()" class="btn btn-secondary">تحميل الفواتير</button>
+                    <div id="invoices-list" class="data-list"></div>
+                </div>
+
+                <!-- Reviews Tab -->
+                <div id="tab-reviews" class="tab-pane">
+                    <h3>⭐ التقييمات والمراجعات</h3>
+                    <div class="filter-row">
+                        <select id="review-status-filter" onchange="loadReviews()">
+                            <option value="">كل التقييمات</option>
+                            <option value="Pending">⏳ معلق</option>
+                            <option value="Visible">👁️ مرئي</option>
+                            <option value="Hidden">🙈 مخفي</option>
+                            <option value="approved">✅ مقبول</option>
+                            <option value="Rejected">❌ مرفوض</option>
+                        </select>
+                        <button onclick="loadReviews()" class="btn btn-secondary">تحميل التقييمات</button>
+                    </div>
+                    <div id="reviews-list" class="data-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Message Display -->
+        <div id="message-container"></div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
