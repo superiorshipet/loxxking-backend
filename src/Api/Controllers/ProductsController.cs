@@ -62,6 +62,21 @@ public class ProductsController : ControllerBase
         page = page < 1 ? 1 : page;
         pageSize = pageSize is < 1 or > 100 ? 20 : pageSize;
 
+        // If no countryId provided, try to get from request header (set by GeoLocationMiddleware)
+        if (!countryId.HasValue)
+        {
+            var geoCountry = Request.Headers["X-Geo-Country"].FirstOrDefault();
+            if (!string.IsNullOrEmpty(geoCountry))
+            {
+                var country = await _unitOfWork.Countries.Query()
+                    .FirstOrDefaultAsync(c => c.Name == geoCountry, cancellationToken);
+                if (country != null)
+                {
+                    countryId = country.Id;
+                }
+            }
+        }
+
         // Build cache key
         var version = await _cache.GetStringAsync(VersionKey, cancellationToken) ?? "1";
         var cacheKey = $"products:list:{categoryId}:{search}:{countryId}:{page}:{pageSize}:v{version}";
@@ -110,7 +125,6 @@ public class ProductsController : ControllerBase
         {
             finalResult = new { data = products, totalCount, page, pageSize, totalPages = (int)Math.Ceiling(totalCount / (double)pageSize) };
             
-            // Cache
             var options = new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl };
             await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(finalResult), options, cancellationToken);
             
@@ -150,6 +164,21 @@ public class ProductsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(Guid id, [FromQuery] Guid? countryId, CancellationToken cancellationToken)
     {
+        // If no countryId provided, try to get from request header
+        if (!countryId.HasValue)
+        {
+            var geoCountry = Request.Headers["X-Geo-Country"].FirstOrDefault();
+            if (!string.IsNullOrEmpty(geoCountry))
+            {
+                var country = await _unitOfWork.Countries.Query()
+                    .FirstOrDefaultAsync(c => c.Name == geoCountry, cancellationToken);
+                if (country != null)
+                {
+                    countryId = country.Id;
+                }
+            }
+        }
+
         // Build cache key
         var cacheKey = $"products:{id}:{countryId}";
 

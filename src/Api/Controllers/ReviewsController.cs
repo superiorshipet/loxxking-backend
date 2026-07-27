@@ -19,6 +19,8 @@ public class ReviewsController : ControllerBase
         _unitOfWork = unitOfWork;
     }
 
+    public record CreateReviewRequest(Guid ProductId, int Rating, string Comment);
+
     [HttpGet("product/{productId}")]
     public async Task<IActionResult> GetByProduct(Guid productId, CancellationToken cancellationToken)
     {
@@ -52,7 +54,7 @@ public class ReviewsController : ControllerBase
         // Check if user has purchased this product (order must be Delivered)
         var hasPurchased = await _unitOfWork.OrderItems.Query()
             .Include(oi => oi.Order)
-            .AnyAsync(oi => oi.ProductId == request.ProductId && oi.Order.CustomerId == userId && oi.Order.Status == OrderStatus.Delivered, cancellationToken);
+            .AnyAsync(oi => oi.ProductId == request.ProductId && oi.Order.UserId == userId && oi.Order.Status == OrderStatus.Delivered, cancellationToken);
 
         if (!hasPurchased)
             return BadRequest(new { message = "You can only review products you have purchased and received." });
@@ -167,7 +169,6 @@ public class ReviewsController : ControllerBase
         _unitOfWork.Reviews.Update(review);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Notify user
         await _unitOfWork.Notifications.AddAsync(new Notification
         {
             Id = Guid.NewGuid(),
@@ -197,7 +198,6 @@ public class ReviewsController : ControllerBase
         _unitOfWork.Reviews.Update(review);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Notify user
         await _unitOfWork.Notifications.AddAsync(new Notification
         {
             Id = Guid.NewGuid(),
@@ -244,13 +244,6 @@ public class ReviewsController : ControllerBase
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return NoContent();
-    }
-
-    public class CreateReviewRequest
-    {
-        public Guid ProductId { get; set; }
-        public int Rating { get; set; }
-        public string Comment { get; set; } = string.Empty;
     }
 
     private Guid GetCurrentUserId()

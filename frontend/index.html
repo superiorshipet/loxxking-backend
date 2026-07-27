@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ar" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LoxxKing Admin Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>🏆 LoxxKing Admin Panel</h1>
+            <div id="auth-status">
+                <span id="user-info">غير مسجل الدخول</span>
+                <button id="logout-btn" style="display:none;" onclick="logout()">تسجيل خروج</button>
+            </div>
+        </header>
+
+        <!-- Login Section -->
+        <section id="login-section" class="card">
+            <h2>🔐 تسجيل الدخول</h2>
+            <div class="login-form">
+                <div class="form-group">
+                    <label>البريد الإلكتروني</label>
+                    <input type="email" id="login-email" value="admin@loxxking.com">
+                </div>
+                <div class="form-group">
+                    <label>كلمة المرور</label>
+                    <input type="password" id="login-password" value="Admin@123456">
+                </div>
+                <button onclick="login()" class="btn btn-primary">تسجيل الدخول</button>
+                <div id="login-message" class="message"></div>
+            </div>
+        </section>
+
+        <!-- Dashboard -->
+        <section id="dashboard" style="display:none;">
+            <!-- Navigation Tabs -->
+            <nav class="tabs">
+                <button class="tab-btn active" onclick="showTab('users')">👥 المستخدمين</button>
+                <button class="tab-btn" onclick="showTab('categories')">📂 التصنيفات</button>
+                <button class="tab-btn" onclick="showTab('products')">📦 المنتجات</button>
+                <button class="tab-btn" onclick="showTab('offers')">🎯 العروض</button>
+                <button class="tab-btn" onclick="showTab('orders')">📋 الطلبات</button>
+                <button class="tab-btn" onclick="showTab('site-visits')">📊 الزيارات</button>
+                <button class="tab-btn" onclick="showTab('staff')">👔 إدارة الموظفين</button>
+            </nav>
+
+            <!-- Tab Content -->
+            <div id="tab-content" class="tab-content">
+                <!-- Users Tab -->
+                <div id="tab-users" class="tab-pane active">
+                    <h3>👥 المستخدمين</h3>
+                    <button onclick="loadUsers()" class="btn btn-secondary">تحميل المستخدمين</button>
+                    <div id="users-list" class="data-list"></div>
+                </div>
+
+                <!-- Categories Tab -->
+                <div id="tab-categories" class="tab-pane">
+                    <h3>📂 التصنيفات</h3>
+                    <div class="form-row">
+                        <input type="text" id="category-name-ar" placeholder="الاسم بالعربي">
+                        <input type="text" id="category-name-en" placeholder="الاسم بالإنجليزي">
+                        <button onclick="createCategory()" class="btn btn-success">إضافة تصنيف</button>
+                    </div>
+                    <button onclick="loadCategories()" class="btn btn-secondary">تحميل التصنيفات</button>
+                    <div id="categories-list" class="data-list"></div>
+                </div>
+
+                <!-- Products Tab -->
+                <div id="tab-products" class="tab-pane">
+                    <h3>📦 المنتجات</h3>
+                    <button onclick="loadProducts()" class="btn btn-secondary">تحميل المنتجات</button>
+                    <div id="products-list" class="data-list"></div>
+                </div>
+
+                <!-- Offers Tab -->
+                <div id="tab-offers" class="tab-pane">
+                    <h3>🎯 العروض</h3>
+                    <button onclick="loadOffers()" class="btn btn-secondary">تحميل العروض النشطة</button>
+                    <div id="offers-list" class="data-list"></div>
+                </div>
+
+                <!-- Orders Tab -->
+                <div id="tab-orders" class="tab-pane">
+                    <h3>📋 الطلبات</h3>
+                    <button onclick="loadOrders()" class="btn btn-secondary">تحميل الطلبات</button>
+                    <div id="orders-list" class="data-list"></div>
+                </div>
+
+                <!-- Site Visits Tab -->
+                <div id="tab-site-visits" class="tab-pane">
+                    <h3>📊 زيارات الموقع</h3>
+                    <div class="stat-card">
+                        <span>زيارات اليوم:</span>
+                        <span id="today-count">-</span>
+                    </div>
+                    <button onclick="loadSiteVisits()" class="btn btn-secondary">تحميل الزيارات</button>
+                    <div id="site-visits-list" class="data-list"></div>
+                </div>
+
+                <!-- Staff Management Tab -->
+                <div id="tab-staff" class="tab-pane">
+                    <h3>👔 إدارة الموظفين</h3>
+                    <div class="staff-forms">
+                        <div class="form-card">
+                            <h4>إضافة مدير متجر (Admin Only)</h4>
+                            <input type="text" id="manager-name" placeholder="الاسم">
+                            <input type="email" id="manager-email" placeholder="البريد الإلكتروني">
+                            <input type="text" id="manager-phone" placeholder="رقم الهاتف">
+                            <input type="password" id="manager-password" placeholder="كلمة المرور">
+                            <input type="text" id="manager-country" placeholder="الدولة (مصر)">
+                            <button onclick="createManager()" class="btn btn-warning">إضافة مدير متجر</button>
+                        </div>
+                        <div class="form-card">
+                            <h4>إضافة موظف مبيعات</h4>
+                            <input type="text" id="employee-name" placeholder="الاسم">
+                            <input type="email" id="employee-email" placeholder="البريد الإلكتروني">
+                            <input type="text" id="employee-phone" placeholder="رقم الهاتف">
+                            <input type="password" id="employee-password" placeholder="كلمة المرور">
+                            <input type="text" id="employee-country" placeholder="الدولة (مصر)">
+                            <button onclick="createEmployee()" class="btn btn-info">إضافة موظف مبيعات</button>
+                        </div>
+                    </div>
+                    <button onclick="loadStaff()" class="btn btn-secondary">تحميل الموظفين</button>
+                    <div id="staff-list" class="data-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Message Display -->
+        <div id="message-container"></div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
