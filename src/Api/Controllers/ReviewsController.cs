@@ -19,56 +19,7 @@ public class ReviewsController : ControllerBase
         _unitOfWork = unitOfWork;
     }
 
-    [HttpGet]
-    [Authorize(Roles = "Admin,StoreManager")]
-    public async Task<IActionResult> GetAll(
-        [FromQuery] ReviewStatus? status = null,
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 20,
-        CancellationToken cancellationToken = default)
-    {
-        page = page < 1 ? 1 : page;
-        pageSize = pageSize is < 1 or > 100 ? 20 : pageSize;
-
-        var query = _unitOfWork.Reviews.Query()
-            .Include(r => r.User)
-            .AsQueryable();
-
-        if (status.HasValue)
-            query = query.Where(r => r.Status == status.Value);
-
-        var totalCount = await query.CountAsync(cancellationToken);
-
-        var reviews = await query
-            .OrderByDescending(r => r.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(r => new
-            {
-                r.Id,
-                r.Rating,
-                r.Comment,
-                r.Status,
-                r.IsApproved,
-                r.CreatedAt,
-                User = new
-                {
-                    r.User.Id,
-                    r.User.Name
-                },
-                ProductId = r.ProductId
-            })
-            .ToListAsync(cancellationToken);
-
-        return Ok(new
-        {
-            data = reviews,
-            totalCount,
-            page,
-            pageSize,
-            totalPages = (int)Math.Ceiling(totalCount / (double)pageSize)
-        });
-    }
+    public record CreateReviewRequest(Guid ProductId, int Rating, string Comment);
 
     [HttpGet("product/{productId}")]
     public async Task<IActionResult> GetByProduct(Guid productId, CancellationToken cancellationToken)
@@ -103,7 +54,7 @@ public class ReviewsController : ControllerBase
         // Check if user has purchased this product (order must be Delivered)
         var hasPurchased = await _unitOfWork.OrderItems.Query()
             .Include(oi => oi.Order)
-            .AnyAsync(oi => oi.ProductId == request.ProductId && oi.Order.CustomerId == userId && oi.Order.Status == OrderStatus.Delivered, cancellationToken);
+            .AnyAsync(oi => oi.ProductId == request.ProductId && oi.Order.UserId == userId && oi.Order.Status == OrderStatus.Delivered, cancellationToken);
 
         if (!hasPurchased)
             return BadRequest(new { message = "You can only review products you have purchased and received." });
@@ -293,13 +244,6 @@ public class ReviewsController : ControllerBase
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return NoContent();
-    }
-
-    public class CreateReviewRequest
-    {
-        public Guid ProductId { get; set; }
-        public int Rating { get; set; }
-        public string Comment { get; set; } = string.Empty;
     }
 
     private Guid GetCurrentUserId()

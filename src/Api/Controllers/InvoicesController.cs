@@ -24,9 +24,9 @@ public class InvoicesController : ControllerBase
     {
         var invoices = await _unitOfWork.Invoices.Query()
             .Include(i => i.Order)
-                .ThenInclude(o => o.Customer)
-            .Include(i => i.Order)
                 .ThenInclude(o => o.Country)
+            .Include(i => i.Order)
+                .ThenInclude(o => o.User)
             .Select(i => new
             {
                 i.Id,
@@ -36,7 +36,8 @@ public class InvoicesController : ControllerBase
                 Order = new
                 {
                     i.Order.Id,
-                    CustomerName = i.Order.Customer.Name,
+                    i.Order.OrderNumber,
+                    CustomerName = i.Order.User != null ? i.Order.User.Name : i.Order.GuestName,
                     Country = i.Order.Country.Name
                 }
             })
@@ -53,15 +54,15 @@ public class InvoicesController : ControllerBase
 
         var invoice = await _unitOfWork.Invoices.Query()
             .Include(i => i.Order)
-                .ThenInclude(o => o.Customer)
-            .Include(i => i.Order)
                 .ThenInclude(o => o.Country)
+            .Include(i => i.Order)
+                .ThenInclude(o => o.User)
             .FirstOrDefaultAsync(i => i.Id == id, cancellationToken);
 
         if (invoice is null)
             return NotFound();
 
-        if (!isStaff && invoice.Order.CustomerId != userId)
+        if (!isStaff && invoice.Order.UserId != userId)
             return Forbid();
 
         return Ok(new
@@ -73,7 +74,8 @@ public class InvoicesController : ControllerBase
             Order = new
             {
                 invoice.Order.Id,
-                CustomerName = invoice.Order.Customer.Name,
+                invoice.Order.OrderNumber,
+                CustomerName = invoice.Order.User != null ? invoice.Order.User.Name : invoice.Order.GuestName,
                 Country = invoice.Order.Country.Name
             }
         });
@@ -84,7 +86,7 @@ public class InvoicesController : ControllerBase
     public async Task<IActionResult> Create(Guid orderId, CancellationToken cancellationToken)
     {
         var order = await _unitOfWork.Orders.Query()
-            .Include(o => o.Customer)
+            .Include(o => o.User)
             .FirstOrDefaultAsync(o => o.Id == orderId, cancellationToken);
 
         if (order is null)
@@ -120,7 +122,9 @@ public class InvoicesController : ControllerBase
 
         var invoice = await _unitOfWork.Invoices.Query()
             .Include(i => i.Order)
-                .ThenInclude(o => o.Customer)
+                .ThenInclude(o => o.Country)
+            .Include(i => i.Order)
+                .ThenInclude(o => o.User)
             .Include(i => i.Order)
                 .ThenInclude(o => o.OrderItems)
                     .ThenInclude(oi => oi.Product)
@@ -129,7 +133,7 @@ public class InvoicesController : ControllerBase
         if (invoice is null)
             return NotFound();
 
-        if (!isStaff && invoice.Order.CustomerId != userId)
+        if (!isStaff && invoice.Order.UserId != userId)
             return Forbid();
 
         var pdfGenerator = HttpContext.RequestServices.GetRequiredService<IInvoicePdfGenerator>();
