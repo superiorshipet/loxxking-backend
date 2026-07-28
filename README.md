@@ -4,7 +4,7 @@
 LoxxKing is a modern e-commerce platform backend built with ASP.NET Core. It provides a robust, highly scalable RESTful API supporting a rich feature set including product management, order processing, wishlist handling (for both guests and authenticated users), and dynamic settings configuration. The architecture is designed to seamlessly integrate with a Vanilla JavaScript frontend administration panel.
 
 ## Architecture & Technology Stack
-- **Framework:** ASP.NET Core 8.0 Web API
+- **Framework:** ASP.NET Core 10.0 Web API
 - **Database:** PostgreSQL (Relational Data)
 - **ORM:** Entity Framework Core
 - **Caching:** Redis (Distributed Caching for high performance)

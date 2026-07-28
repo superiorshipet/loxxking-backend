@@ -2303,94 +2303,6 @@ function showToast(type, message) {
 // ============================================================
 // SETTINGS
 // ============================================================
-// --- PRODUCT IMAGES MANAGEMENT ---
-
-let currentProductImages = [];
-
-function renderProductImages() {
-    const gallery = document.getElementById('prod-images-gallery');
-    if (!gallery) return;
-    
-    gallery.innerHTML = '';
-    
-    if (currentProductImages.length === 0) {
-        gallery.innerHTML = '<div style="color:var(--text-muted); font-size:13px; font-style:italic;">No images added yet.</div>';
-        return;
-    }
-    
-    currentProductImages.forEach((url, index) => {
-        const isMain = index === 0;
-        const div = document.createElement('div');
-        div.style.position = 'relative';
-        div.style.width = '80px';
-        div.style.height = '80px';
-        div.style.borderRadius = '6px';
-        div.style.overflow = 'hidden';
-        div.style.border = isMain ? '2px solid var(--primary-color)' : '1px solid var(--border-light)';
-        
-        div.innerHTML = `
-            <img src="${escapeHtml(url)}" style="width:100%; height:100%; object-fit:cover;" onerror="this.src='https://via.placeholder.com/80?text=Error'">
-            ${isMain ? '<div style="position:absolute; bottom:0; left:0; right:0; background:rgba(99,102,241,0.9); color:#fff; font-size:10px; text-align:center; padding:2px;">Main</div>' : ''}
-            <button type="button" onclick="removeProductImage(${index})" style="position:absolute; top:2px; right:2px; background:rgba(220,38,38,0.9); color:white; border:none; border-radius:50%; width:20px; height:20px; cursor:pointer; font-size:12px; display:flex; align-items:center; justify-content:center;">✕</button>
-        `;
-        gallery.appendChild(div);
-    });
-}
-
-function addProductImageUrl() {
-    const input = document.getElementById('prod-image-url-input');
-    const url = input.value.trim();
-    if (!url) return;
-    
-    currentProductImages.push(url);
-    input.value = '';
-    renderProductImages();
-}
-
-function removeProductImage(index) {
-    currentProductImages.splice(index, 1);
-    renderProductImages();
-}
-
-async function uploadProductImage() {
-    const fileInput = document.getElementById('prod-image-file-input');
-    const files = fileInput.files;
-    if (!files || files.length === 0) {
-        showToast('warning', 'Please select at least one file first.');
-        return;
-    }
-    
-    const btn = document.getElementById('prod-upload-btn');
-    const originalText = btn.innerHTML;
-    btn.innerHTML = '⏳...';
-    btn.disabled = true;
-    
-    try {
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            const reader = new FileReader();
-            
-            await new Promise((resolve, reject) => {
-                reader.onload = (e) => {
-                    currentProductImages.push(e.target.result);
-                    resolve();
-                };
-                reader.onerror = reject;
-                reader.readAsDataURL(file);
-            });
-        }
-        
-        fileInput.value = '';
-        renderProductImages();
-        showToast('success', 'Image(s) added successfully!');
-    } catch (err) {
-        showToast('error', 'Failed to read files: ' + err.message);
-    } finally {
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-    }
-}
-
 async function loadSettings() {
     try {
         const data = await apiRequest('/settings/notifications');
@@ -2417,7 +2329,7 @@ async function saveSettings() {
     const greenApiToken = document.getElementById('settings-greenapi-token-input').value.trim();
     const smtpUser = document.getElementById('settings-smtp-user-input').value.trim();
     const smtpPass = document.getElementById('settings-smtp-pass-input').value.trim();
-
+    
     try {
         await apiRequest('/settings/notifications', {
             method: 'PUT',
@@ -2431,12 +2343,14 @@ async function saveSettings() {
             })
         });
         
-        msgEl.style.display = 'block';
-        msgEl.style.color = 'var(--accent-green)';
         msgEl.textContent = '✅ Settings saved successfully! (Will be applied immediately)';
-    } catch (err) {
+        msgEl.className = 'margin-top-sm alert alert-success';
         msgEl.style.display = 'block';
-        msgEl.style.color = 'var(--accent-rose)';
-        msgEl.textContent = '❌ Failed to save settings: ' + err.message;
+        
+        setTimeout(() => { msgEl.style.display = 'none'; }, 4000);
+    } catch (e) {
+        msgEl.textContent = '❌ Failed to save settings: ' + e.message;
+        msgEl.className = 'margin-top-sm alert alert-error';
+        msgEl.style.display = 'block';
     }
 }

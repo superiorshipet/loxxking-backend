@@ -26,19 +26,22 @@ public class SupportChatController : ControllerBase
         var messages = await _unitOfWork.SupportMessages.Query()
             .Where(sm => sm.ConversationId == conversationId)
             .OrderBy(sm => sm.CreatedAt)
-            .Select(sm => new
-            {
-                sm.Id,
-                sm.ConversationId,
-                sm.SenderType,
-                sm.SenderName,
-                sm.Message,
-                sm.IsRead,
-                sm.CreatedAt
-            })
             .ToListAsync(cancellationToken);
 
-        return Ok(messages);
+        var result = messages.Select(sm => new
+        {
+            sm.Id,
+            sm.ConversationId,
+            sm.Message,
+            sm.CreatedAt,
+            sm.IsRead,
+            Sender = sm.Sender != null
+                ? new { Id = (Guid?)sm.Sender.Id, Name = sm.Sender.Name, Role = sm.Sender.Role.ToString() }
+                : new { Id = sm.SenderId,          Name = "Customer",     Role = "Customer" },
+            sm.RecipientId
+        });
+
+        return Ok(result);
     }
 
     // ─── Send a message (customer or staff) ─────────────────────────────────
@@ -53,19 +56,8 @@ public class SupportChatController : ControllerBase
         string senderType;
         string senderName;
 
-        var isStaff = User.IsInRole("Admin") || User.IsInRole("StoreManager") || User.IsInRole("SalesEmployee");
-        if (isStaff)
-        {
-            senderType = "Staff";
-            senderName = User.FindFirst(ClaimTypes.Name)?.Value
-                      ?? User.FindFirst("name")?.Value
-                      ?? "Support Team";
-        }
-        else
-        {
-            senderType = "Customer";
-            senderName = request.SenderName ?? "Customer";
-        }
+        // null = guest/anonymous (no FK violation)
+        Guid? senderIdToStore = userId != Guid.Empty ? userId : (Guid?)null;
 
         // New conversation if zero GUID sent
         var conversationId = (request.ConversationId == Guid.Empty)
@@ -79,6 +71,7 @@ public class SupportChatController : ControllerBase
             SenderType = senderType,
             SenderName = senderName,
             Message = request.Message,
+            GuestName = request.GuestName,
             IsRead = false,
             CreatedAt = DateTime.UtcNow
         };
@@ -116,18 +109,22 @@ public class SupportChatController : ControllerBase
             .GroupBy(sm => sm.ConversationId)
             .Select(g =>
             {
-                var ordered  = g.OrderByDescending(m => m.CreatedAt).ToList();
-                var lastMsg  = ordered.First();
-                // Use the first message's sender name as the conversation label
-                var firstMsg = g.OrderBy(m => m.CreatedAt).First();
+                var msgs = g.OrderByDescending(sm => sm.CreatedAt).ToList();
+                var lastMsg = msgs.First();
+                // Best name: registered user name > GuestName on any message > "Customer"
+                var firstMsg = g.OrderBy(sm => sm.CreatedAt).First();
+                var displayName = lastMsg.Sender?.Name
+                    ?? g.Where(m => m.GuestName != null).Select(m => m.GuestName).FirstOrDefault()
+                    ?? "Customer";
                 return new
                 {
-                    ConversationId  = g.Key,
-                    CustomerName    = firstMsg.SenderName,
-                    LastMessage     = lastMsg.Message,
-                    LastMessageAt   = lastMsg.CreatedAt,
-                    UnreadCount     = g.Count(m => !m.IsRead && m.SenderType == "Customer"),
-                    MessageCount    = g.Count()
+                    ConversationId = g.Key,
+                    LastMessage = lastMsg.Message,
+                    LastMessageAt = lastMsg.CreatedAt,
+                    SenderName = displayName,
+                    SenderRole = lastMsg.Sender?.Role.ToString() ?? "Guest",
+                    UnreadCount = g.Count(m => !m.IsRead && m.SenderId == null),
+                    MessageCount = g.Count()
                 };
             })
             .OrderByDescending(c => c.LastMessageAt)
@@ -141,9 +138,11 @@ public class SupportChatController : ControllerBase
     [Authorize(Roles = "Admin,StoreManager,SalesEmployee")]
     public async Task<IActionResult> MarkRead(Guid conversationId, CancellationToken cancellationToken)
     {
-        var msgs = await _unitOfWork.SupportMessages.Query()
-            .Where(m => m.ConversationId == conversationId && !m.IsRead)
-            .ToListAsync(cancellationToken);
+        public Guid ConversationId { get; set; }
+        public Guid? RecipientId { get; set; }
+        public string Message { get; set; } = string.Empty;
+        public string? GuestName { get; set; }   // optional: guest's name shown to admin
+    }
 
         foreach (var m in msgs) { m.IsRead = true; _unitOfWork.SupportMessages.Update(m); }
         await _unitOfWork.SaveChangesAsync(cancellationToken);
