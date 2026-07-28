@@ -7,6 +7,7 @@ public class Product {
     public string NameAr { get; set; } = default!;
     public string NameEn { get; set; } = default!;
     public string Description { get; set; } = default!;
+    public List<string> Images { get; set; } = new();
 
     /// <summary>Newline-separated list of feature bullet points.</summary>
     public string? Features { get; set; }
