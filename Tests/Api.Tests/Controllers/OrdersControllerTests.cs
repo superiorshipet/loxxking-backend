@@ -15,6 +15,8 @@ public class OrdersControllerTests
 {
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
     private readonly Mock<IOrderNumberGenerator> _orderNumberGeneratorMock;
+    private readonly Mock<IOrderNotificationService> _notificationsMock;
+    private readonly Mock<IInvoicePdfGenerator> _pdfGeneratorMock;
     private readonly OrdersController _controller;
     private readonly Guid _userId = Guid.NewGuid();
 
@@ -22,7 +24,20 @@ public class OrdersControllerTests
     {
         _unitOfWorkMock = new Mock<IUnitOfWork>();
         _orderNumberGeneratorMock = new Mock<IOrderNumberGenerator>();
-        _controller = new OrdersController(_unitOfWorkMock.Object, _orderNumberGeneratorMock.Object);
+        _notificationsMock = new Mock<IOrderNotificationService>();
+        _pdfGeneratorMock = new Mock<IInvoicePdfGenerator>();
+
+        _notificationsMock.Setup(x => x.NotifyNewOrderAsync(It.IsAny<OrderNotificationData>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+            
+        _pdfGeneratorMock.Setup(x => x.GenerateAsync(It.IsAny<Invoice>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<byte>());
+
+        _controller = new OrdersController(
+            _unitOfWorkMock.Object, 
+            _orderNumberGeneratorMock.Object, 
+            _notificationsMock.Object,
+            _pdfGeneratorMock.Object);
         
         var claims = new List<Claim>
         {

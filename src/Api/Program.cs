@@ -1,5 +1,6 @@
 using Api.Middlewares;
 using Application.Common.Interfaces;
+using Infrastructure.Services;
 using Infrastructure;
 using Infrastructure.Persistence;
 using Infrastructure.Repositories;
@@ -100,14 +101,27 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
 builder.Services.AddScoped<IFileStorageService, CloudinaryFileStorageService>();
 builder.Services.AddScoped<IInvoicePdfGenerator, QuestPdfInvoiceGenerator>();
-builder.Services.AddScoped<IOrderNumberGenerator, OrderNumberGenerator>(); // <--- ADDED
+builder.Services.AddScoped<IOrderNumberGenerator, OrderNumberGenerator>();
+
+// ==================== Notification Service (Email + WhatsApp) ====================
+builder.Services.AddHttpClient("callmebot", c =>
+{
+    c.BaseAddress = new Uri("https://api.callmebot.com");
+    c.Timeout = TimeSpan.FromSeconds(10);
+});
+builder.Services.AddScoped<IOrderNotificationService, OrderNotificationService>();
 
 // ==================== GeoLocation Service ====================
 builder.Services.AddGeoLocationService(builder.Configuration);
 
 // ==================== Controllers ====================
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(opts =>
+    {
+        opts.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
+
 
 builder.Services.AddCors(options =>
 {
@@ -197,11 +211,15 @@ if ((Environment.GetEnvironmentVariable("RUN_MIGRATIONS") ?? "false")
 
 app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
 app.UseMiddleware<GeoLocationMiddleware>();
+
+// CORS must be first — before HttpsRedirection and Auth — so OPTIONS preflight succeeds
+app.UseCors("AllowAll");
+
 app.UseResponseCompression();
 
-app.UseHttpsRedirection();
-
-app.UseCors("AllowAll");
+// Skip HTTPS redirect in development so the frontend can talk to http://localhost:5196
+if (!app.Environment.IsDevelopment())
+    app.UseHttpsRedirection();
 
 app.UseRateLimiter();
 
