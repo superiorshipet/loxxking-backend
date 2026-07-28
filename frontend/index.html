@@ -250,6 +250,9 @@
                         <button class="nav-item" onclick="switchTab('auth')" id="nav-auth">
                             <span class="icon">🔐</span> Auth & Roles
                         </button>
+                        <button class="nav-item" onclick="switchTab('settings')" id="nav-settings">
+                            <span class="icon">⚙️</span> App Settings
+                        </button>
                     </nav>
 
                     <div class="sidebar-footer">
@@ -648,6 +651,48 @@
                                     <div class="alert alert-info">Not logged in. Use the form on the left or quick presets.</div>
                                 </div>
                             </div>
+                        </div>
+                    </section>
+
+                    <!-- SETTINGS TAB -->
+                    <section id="tab-settings" class="tab-page" style="display: none;">
+                        <div class="header-flex">
+                            <h2>⚙️ Application Settings</h2>
+                        </div>
+                        <div class="card shadow-sm margin-top-md" style="max-width: 600px;">
+                            <div class="form-group">
+                                <label>Order Notifications Email (Receiving Email)</label>
+                                <input type="email" id="settings-email-input" placeholder="e.g. luxiraholding@gmail.com">
+                            </div>
+                            <div class="form-group">
+                                <label>Admin WhatsApp Number (Receiving Notifications)</label>
+                                <input type="text" id="settings-whatsapp-input" placeholder="e.g. +905386466663">
+                            </div>
+                            
+                            <hr style="margin: 20px 0; border: 0; border-top: 1px solid var(--border-color);">
+                            <h3>GreenAPI (WhatsApp Sender)</h3>
+                            <div class="form-group">
+                                <label>Instance ID</label>
+                                <input type="text" id="settings-greenapi-instance-input" placeholder="e.g. 710722694759">
+                            </div>
+                            <div class="form-group">
+                                <label>API Token</label>
+                                <input type="text" id="settings-greenapi-token-input" placeholder="Leave empty to keep unchanged">
+                            </div>
+
+                            <hr style="margin: 20px 0; border: 0; border-top: 1px solid var(--border-color);">
+                            <h3>SMTP (Email Sender)</h3>
+                            <div class="form-group">
+                                <label>SMTP Email (Sender)</label>
+                                <input type="email" id="settings-smtp-user-input" placeholder="e.g. workthing723@gmail.com">
+                            </div>
+                            <div class="form-group">
+                                <label>SMTP App Password</label>
+                                <input type="password" id="settings-smtp-pass-input" placeholder="Leave empty to keep unchanged">
+                            </div>
+
+                            <button class="btn btn-primary margin-top-md" onclick="saveSettings()">Save Settings</button>
+                            <p id="settings-save-message" class="margin-top-sm" style="display: none;"></p>
                         </div>
                     </section>
 
