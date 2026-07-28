@@ -1,8 +1,11 @@
 namespace Domain.Entities;
 
+/// <summary>A single message in a support conversation thread.</summary>
 public class SupportMessage
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+
+    /// <summary>Groups messages into one conversation thread.</summary>
     public Guid ConversationId { get; set; }
     public Guid? SenderId { get; set; }          // null = guest/anonymous
     public User? Sender { get; set; }
@@ -13,5 +16,6 @@ public class SupportMessage
     public Guid? RelatedReviewId { get; set; }
     public string? GuestName { get; set; }      // name for guest/anonymous senders
     public bool IsRead { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

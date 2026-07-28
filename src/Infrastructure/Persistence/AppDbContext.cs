@@ -24,6 +24,7 @@ public class AppDbContext : DbContext
     public DbSet<Offer> Offers => Set<Offer>();
     public DbSet<BankTransfer> BankTransfers => Set<BankTransfer>();
     public DbSet<SupportConversation> SupportConversations => Set<SupportConversation>();
+    public DbSet<WishlistItem> WishlistItems => Set<WishlistItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -74,9 +75,13 @@ public class AppDbContext : DbContext
             .HasIndex(i => i.OrderId)
             .IsUnique();
 
-        // SupportMessage indexes
-        modelBuilder.Entity<SupportMessage>()
-            .HasIndex(sm => sm.ConversationId);
+        // SupportMessage: index on ConversationId for fast thread lookup (no FK - supports guests)
+        modelBuilder.Entity<SupportMessage>(entity =>
+        {
+            entity.HasIndex(sm => sm.ConversationId);
+            entity.Property(sm => sm.SenderType).HasMaxLength(20).HasDefaultValue("Customer");
+            entity.Property(sm => sm.SenderName).HasMaxLength(100).HasDefaultValue("Customer");
+        });
 
         // Order relationships
         modelBuilder.Entity<Order>()
@@ -90,15 +95,13 @@ public class AppDbContext : DbContext
             .WithMany()
             .HasForeignKey(o => o.CountryId);
 
-        // SupportConversation relationships
-        modelBuilder.Entity<SupportConversation>()
-            .HasMany(sc => sc.Messages)
-            .WithOne()
-            .HasForeignKey(sm => sm.ConversationId)
-            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<WishlistItem>(entity =>
+        {
+            // One wishlist entry per user per product
+            entity.HasIndex(w => new { w.UserId, w.ProductId }).IsUnique();
+            entity.HasOne(w => w.User).WithMany().HasForeignKey(w => w.UserId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(w => w.Product).WithMany().HasForeignKey(w => w.ProductId).OnDelete(DeleteBehavior.Cascade);
+        });
 
-        modelBuilder.Entity<SupportConversation>()
-            .HasIndex(sc => sc.OrderNumber)
-            .IsUnique();
     }
 }
