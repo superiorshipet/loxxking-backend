@@ -526,6 +526,9 @@ namespace Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("GuestName")
+                        .HasColumnType("text");
+
                     b.Property<bool>("IsRead")
                         .HasColumnType("boolean");
 
@@ -547,7 +550,7 @@ namespace Infrastructure.Migrations
                         .HasColumnType("character varying(20)")
                         .HasDefaultValue("Customer");
 
-                    b.Property<Guid?>("SupportConversationId")
+                    b.Property<Guid?>("SenderId")
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
@@ -840,9 +843,7 @@ namespace Infrastructure.Migrations
                 {
                     b.HasOne("Domain.Entities.Country", "Country")
                         .WithMany()
-                        .HasForeignKey("CountryId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .HasForeignKey("SenderId");
 
                     b.Navigation("Country");
                 });
