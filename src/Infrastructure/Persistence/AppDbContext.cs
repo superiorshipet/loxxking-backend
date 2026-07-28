@@ -24,6 +24,7 @@ public class AppDbContext : DbContext
     public DbSet<Offer> Offers => Set<Offer>();
     public DbSet<BankTransfer> BankTransfers => Set<BankTransfer>();
     public DbSet<SupportConversation> SupportConversations => Set<SupportConversation>();
+    public DbSet<WishlistItem> WishlistItems => Set<WishlistItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -93,6 +94,14 @@ public class AppDbContext : DbContext
             .HasOne(o => o.Country)
             .WithMany()
             .HasForeignKey(o => o.CountryId);
+
+        modelBuilder.Entity<WishlistItem>(entity =>
+        {
+            // One wishlist entry per user per product
+            entity.HasIndex(w => new { w.UserId, w.ProductId }).IsUnique();
+            entity.HasOne(w => w.User).WithMany().HasForeignKey(w => w.UserId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(w => w.Product).WithMany().HasForeignKey(w => w.ProductId).OnDelete(DeleteBehavior.Cascade);
+        });
 
     }
 }

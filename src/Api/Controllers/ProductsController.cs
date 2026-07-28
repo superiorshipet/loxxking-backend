@@ -23,11 +23,16 @@ public class ProductsController : ControllerBase
         _cache = cache;
     }
 
-    public record CreateProductRequest(Guid CategoryId, string NameAr, string NameEn, string Description, decimal BasePrice);
-    public record UpdateProductRequest(Guid CategoryId, string NameAr, string NameEn, string Description, decimal BasePrice);
+    public record CreateProductRequest(
+        Guid CategoryId, string NameAr, string NameEn, string Description, decimal BasePrice,
+        string? Features = null, string? ShippingPolicy = null, string? ReturnPolicy = null);
+    public record UpdateProductRequest(
+        Guid CategoryId, string NameAr, string NameEn, string Description, decimal BasePrice,
+        string? Features = null, string? ShippingPolicy = null, string? ReturnPolicy = null);
     public record UpsertPriceRequest(Guid CountryId, decimal Price);
     public record UpsertInventoryRequest(Guid CountryId, int Quantity);
     public record SetPriceRequest(decimal Price);
+    public record SubmitReviewRequest(int Rating, string Comment);
 
     [HttpGet]
     public async Task<IActionResult> GetAll(
@@ -192,6 +197,9 @@ public class ProductsController : ControllerBase
             NameAr = request.NameAr,
             NameEn = request.NameEn,
             Description = request.Description,
+            Features = request.Features,
+            ShippingPolicy = request.ShippingPolicy,
+            ReturnPolicy = request.ReturnPolicy,
             BasePrice = request.BasePrice,
             CreatedAt = DateTime.UtcNow
         };
@@ -212,11 +220,14 @@ public class ProductsController : ControllerBase
         if (product is null)
             return NotFound();
 
-        product.CategoryId = request.CategoryId;
-        product.NameAr = request.NameAr;
-        product.NameEn = request.NameEn;
-        product.Description = request.Description;
-        product.BasePrice = request.BasePrice;
+        product.CategoryId   = request.CategoryId;
+        product.NameAr        = request.NameAr;
+        product.NameEn        = request.NameEn;
+        product.Description   = request.Description;
+        product.Features      = request.Features;
+        product.ShippingPolicy= request.ShippingPolicy;
+        product.ReturnPolicy  = request.ReturnPolicy;
+        product.BasePrice     = request.BasePrice;
 
         _unitOfWork.Products.Update(product);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
@@ -224,6 +235,162 @@ public class ProductsController : ControllerBase
         await InvalidateProductCacheAsync(cancellationToken);
 
         return Ok(new { product.Id });
+    }
+
+    // ─── GET /api/products/best-sellers ──────────────────────────────────────
+    [HttpGet("best-sellers")]
+    public async Task<IActionResult> GetBestSellers(
+        [FromQuery] int top = 20,
+        [FromQuery] Guid? countryId = null,
+        CancellationToken cancellationToken = default)
+    {
+        // Count sold units per product from OrderItems
+        var soldCounts = await _unitOfWork.OrderItems.Query()
+            .GroupBy(oi => oi.ProductId)
+            .Select(g => new { ProductId = g.Key, SoldCount = g.Sum(oi => oi.Quantity) })
+            .OrderByDescending(x => x.SoldCount)
+            .Take(top)
+            .ToListAsync(cancellationToken);
+
+        var productIds = soldCounts.Select(x => x.ProductId).ToList();
+
+        var products = await _unitOfWork.Products.Query()
+            .Include(p => p.Category)
+            .Where(p => productIds.Contains(p.Id))
+            .ToListAsync(cancellationToken);
+
+        // Merge with sold counts and sort
+        var result = soldCounts.Select(s =>
+        {
+            var p = products.FirstOrDefault(x => x.Id == s.ProductId);
+            if (p == null) return null;
+            return new
+            {
+                p.Id, p.NameEn, p.NameAr, p.Description, p.BasePrice,
+                Category = p.Category?.NameEn,
+                s.SoldCount
+            };
+        }).Where(x => x != null).ToList();
+
+        return Ok(result);
+    }
+
+    // ─── GET /api/products/{id}/detail — rich product page data ──────────────
+    [HttpGet("{id}/detail")]
+    public async Task<IActionResult> GetDetail(Guid id, [FromQuery] Guid? countryId, CancellationToken cancellationToken)
+    {
+        var product = await _unitOfWork.Products.Query()
+            .Include(p => p.Category)
+            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+        if (product is null) return NotFound();
+
+        decimal price = product.BasePrice;
+        int stock = 0;
+        if (countryId.HasValue)
+        {
+            var pp = await _unitOfWork.ProductPrices.Query()
+                .FirstOrDefaultAsync(x => x.ProductId == id && x.CountryId == countryId.Value, cancellationToken);
+            price = pp?.Price ?? product.BasePrice;
+
+            stock = await _unitOfWork.Inventories.Query()
+                .Where(i => i.ProductId == id && i.CountryId == countryId.Value)
+                .Select(i => i.Quantity)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        // Reviews (approved only for public)
+        var reviews = await _unitOfWork.Reviews.Query()
+            .Include(r => r.User)
+            .Where(r => r.ProductId == id && r.IsApproved)
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new
+            {
+                r.Id,
+                r.Rating,
+                r.Comment,
+                r.CreatedAt,
+                ReviewerName = r.User != null ? r.User.Name : "Customer"
+            })
+            .ToListAsync(cancellationToken);
+
+        double avgRating = reviews.Count > 0 ? reviews.Average(r => r.Rating) : 0;
+        int soldCount = await _unitOfWork.OrderItems.Query()
+            .Where(oi => oi.ProductId == id)
+            .SumAsync(oi => oi.Quantity, cancellationToken);
+
+        // Features as list
+        var featuresList = product.Features?
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(f => f.Trim().TrimStart('-', '•', '*').Trim())
+            .Where(f => f.Length > 0)
+            .ToList() ?? new List<string>();
+
+        return Ok(new
+        {
+            product.Id,
+            product.NameEn,
+            product.NameAr,
+            product.Description,
+            product.Features,
+            FeaturesList = featuresList,
+            product.ShippingPolicy,
+            product.ReturnPolicy,
+            Category = product.Category?.NameEn,
+            Price = price,
+            Stock = stock,
+            SoldCount = soldCount,
+            AverageRating = Math.Round(avgRating, 1),
+            ReviewCount = reviews.Count,
+            Reviews = reviews,
+            product.CreatedAt
+        });
+    }
+
+    // ─── POST /api/products/{id}/reviews — submit a review ───────────────────
+    [HttpPost("{id}/reviews")]
+    [Authorize]
+    public async Task<IActionResult> SubmitReview(Guid id, [FromBody] SubmitReviewRequest request, CancellationToken cancellationToken)
+    {
+        var userIdStr = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                     ?? User.FindFirst("nameid")?.Value;
+        if (!Guid.TryParse(userIdStr, out var userId)) return Unauthorized();
+
+        if (request.Rating < 1 || request.Rating > 5)
+            return BadRequest(new { message = "Rating must be between 1 and 5." });
+
+        var productExists = await _unitOfWork.Products.Query().AnyAsync(p => p.Id == id, cancellationToken);
+        if (!productExists) return NotFound();
+
+        // One review per user per product
+        var existing = await _unitOfWork.Reviews.Query()
+            .FirstOrDefaultAsync(r => r.ProductId == id && r.UserId == userId, cancellationToken);
+
+        if (existing != null)
+        {
+            existing.Rating = request.Rating;
+            existing.Comment = request.Comment;
+            existing.IsApproved = true; // auto-approve
+            _unitOfWork.Reviews.Update(existing);
+        }
+        else
+        {
+            var review = new Review
+            {
+                Id = Guid.NewGuid(),
+                ProductId = id,
+                UserId = userId,
+                Rating = request.Rating,
+                Comment = request.Comment,
+                IsApproved = true, // auto-approve
+                Status = Domain.Enums.ReviewStatus.approved,
+                CreatedAt = DateTime.UtcNow
+            };
+            await _unitOfWork.Reviews.AddAsync(review, cancellationToken);
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        return Ok(new { message = "Review submitted successfully." });
     }
 
     [HttpDelete("{id}")]

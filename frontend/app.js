@@ -12,8 +12,15 @@ let allCategories = [];
 let cart = JSON.parse(localStorage.getItem('loxx_cart') || '[]');
 let activePortalMode = 'storefront';
 let currentChatConversationId = null;
-let customerConversationId = localStorage.getItem('loxx_customer_conv_id') || null;
+// Validate stored ID is a real GUID (not old 'conv-xxx' format)
+const _storedConvId = localStorage.getItem('loxx_customer_conv_id');
+const _guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+if (_storedConvId && !_guidRegex.test(_storedConvId)) {
+    localStorage.removeItem('loxx_customer_conv_id'); // clear corrupt value
+}
+let customerConversationId = (_storedConvId && _guidRegex.test(_storedConvId)) ? _storedConvId : null;
 let apiLogCount = 0;
+let wishlistProductIds = new Set(); // Set of productId strings in wishlist
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -23,6 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadShopProducts();
     loadCategoriesDropdown();
     updateCartBadge();
+    if (currentToken) loadWishlistIds(); // load wishlist state if logged in
 });
 
 // ============================================================
@@ -369,6 +377,126 @@ async function loadShopProducts() {
     }
 }
 
+// ─── Wishlist / Favourites ────────────────────────────────────────────────────
+
+function toggleWishlistSection() {
+    const section = document.getElementById('wishlist-section');
+    if (!section) return;
+    const isOpen = section.style.display !== 'none';
+    section.style.display = isOpen ? 'none' : 'block';
+    if (!isOpen) {
+        loadMyWishlist(); // load fresh every time it opens
+        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+
+async function loadWishlistIds() {
+    if (!currentToken) return;
+    try {
+        const items = await fetch(`${currentApiBase}/wishlist`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        }).then(r => r.ok ? r.json() : []);
+        wishlistProductIds = new Set(items.map(i => i.productId));
+    } catch (_) {}
+}
+
+async function toggleWishlist(productId) {
+    if (!currentToken) {
+        showToast('info', '💡 Please log in to save favourites');
+        return;
+    }
+    const btn = document.getElementById(`wish-btn-${productId}`);
+    const isIn = wishlistProductIds.has(productId);
+
+    // Instant UI feedback
+    if (btn) btn.textContent = isIn ? '🤍' : '❤️';
+
+    try {
+        const method = isIn ? 'DELETE' : 'POST';
+        const resp = await fetch(`${currentApiBase}/wishlist/${productId}`, {
+            method,
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        if (resp.ok) {
+            if (isIn) {
+                wishlistProductIds.delete(productId);
+                showToast('info', '🤍 Removed from wishlist');
+            } else {
+                wishlistProductIds.add(productId);
+                showToast('success', '❤️ Added to wishlist!');
+            }
+        } else {
+            // Revert on failure
+            if (btn) btn.textContent = isIn ? '❤️' : '🤍';
+            showToast('error', 'Could not update wishlist');
+        }
+    } catch (e) {
+        if (btn) btn.textContent = isIn ? '❤️' : '🤍';
+    }
+}
+
+async function loadMyWishlist() {
+    const container = document.getElementById('wishlist-grid');
+    const countEl = document.getElementById('wishlist-count');
+    if (!container) return;
+
+    if (!currentToken) {
+        container.innerHTML = `
+        <div style="text-align:center;padding:40px;color:var(--text-muted);">
+            <div style="font-size:48px;margin-bottom:12px;">🔒</div>
+            <div style="font-weight:600;margin-bottom:8px;">Login required</div>
+            <div>Please log in to view your saved items.</div>
+        </div>`;
+        return;
+    }
+
+    container.innerHTML = '<div class="loading-state">⏳ Loading your wishlist...</div>';
+
+    try {
+        const items = await fetch(`${currentApiBase}/wishlist`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        }).then(r => r.json());
+
+        if (countEl) countEl.textContent = items.length;
+
+        if (!items || items.length === 0) {
+            container.innerHTML = `
+            <div style="text-align:center;padding:40px;color:var(--text-muted);">
+                <div style="font-size:48px;margin-bottom:12px;">🤍</div>
+                <div style="font-weight:600;margin-bottom:8px;">No saved items yet</div>
+                <div>Tap the ❤️ on any product to save it here.</div>
+            </div>`;
+            return;
+        }
+
+        container.innerHTML = items.map(item => {
+            const p = item.product;
+            return `
+            <div class="shop-product-card" style="position:relative;">
+                <div class="shop-card-img">📦</div>
+                <div class="shop-card-body">
+                    <div>
+                        <div class="shop-card-title">${escapeHtml(p.nameEn)}</div>
+                        <div class="shop-card-sub">${escapeHtml(p.nameAr || '')}</div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Added ${new Date(item.addedAt).toLocaleDateString()}</div>
+                    </div>
+                    <div class="shop-card-footer">
+                        <div class="shop-card-price">${p.basePrice || 0} EGP</div>
+                        <div style="display:flex;gap:6px;">
+                            <button class="btn btn-sm btn-primary" onclick="addToCart('${p.id}')">🛒 Add to Cart</button>
+                            <button class="btn btn-sm btn-outline" onclick="toggleWishlist('${p.id}');loadMyWishlist();" title="Remove">🗑️</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+
+    } catch (err) {
+        container.innerHTML = `<div class="loading-state" style="color:var(--accent-rose);">❌ ${err.message}</div>`;
+    }
+}
+
 function renderShopGrid(productsList) {
     const grid = document.getElementById('shop-products-grid');
     const countEl = document.getElementById('shop-results-count');
@@ -379,19 +507,33 @@ function renderShopGrid(productsList) {
         const pNameEn = p.nameEn || p.NameEn;
         const pNameAr = p.nameAr || p.NameAr || '';
         const pPrice = p.price || p.Price || p.basePrice || p.BasePrice || 0;
+        const isWishlisted = wishlistProductIds.has(pId);
+        const soldBadge = p.soldCount ? `<span style="position:absolute;top:8px;left:8px;background:#ef4444;color:#fff;border-radius:99px;padding:2px 8px;font-size:10px;font-weight:700;">🔥 ${p.soldCount} sold</span>` : '';
         return `
-            <div class="shop-product-card">
-                <div class="shop-card-img">
-                    ${p.imageUrl ? `<img src="${p.imageUrl}" alt="${pNameEn}" onerror="this.onerror=null;this.parentNode.innerHTML='📦';">` : '📦'}
+            <div class="shop-product-card" id="card-${pId}" style="cursor:pointer;">
+                <div class="shop-card-img" style="position:relative;" onclick="openProductDetail('${pId}')">
+                    ${p.imageUrl ? `<img src="${p.imageUrl}" alt="${pNameEn}" onerror="this.onerror=null;this.parentNode.innerHTML='📦';">` : '<span style="font-size:52px;">📦</span>'}
+                    ${soldBadge}
+                    <button onclick="event.stopPropagation();toggleWishlist('${pId}')" id="wish-btn-${pId}" style="
+                        position:absolute;top:8px;right:8px;background:rgba(255,255,255,0.9);
+                        border:none;border-radius:50%;width:32px;height:32px;cursor:pointer;
+                        font-size:16px;display:flex;align-items:center;justify-content:center;
+                        box-shadow:0 1px 4px rgba(0,0,0,0.15);transition:transform 0.15s;
+                    " title="${isWishlisted ? 'Remove from wishlist' : 'Add to wishlist'}"
+                    onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"
+                    >${isWishlisted ? '❤️' : '🤍'}</button>
                 </div>
                 <div class="shop-card-body">
-                    <div>
+                    <div onclick="openProductDetail('${pId}')">
                         <div class="shop-card-title">${escapeHtml(pNameEn)}</div>
                         <div class="shop-card-sub">${escapeHtml(pNameAr)}</div>
                     </div>
                     <div class="shop-card-footer">
                         <div class="shop-card-price">${pPrice} EGP</div>
-                        <button class="btn btn-sm btn-primary" onclick="addToCart('${pId}')">🛒 Add to Cart</button>
+                        <div style="display:flex;gap:6px;">
+                            <button class="btn btn-sm btn-outline" onclick="openProductDetail('${pId}')" style="font-size:11px;padding:5px 10px;">📋 Details</button>
+                            <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();addToCart('${pId}')">🛒</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -414,6 +556,217 @@ function filterShopProducts() {
 
     renderShopGrid(filtered);
 }
+
+// ─── Sort Filter ──────────────────────────────────────────────────────────────
+async function applySortFilter() {
+    const sort = document.getElementById('shop-sort-filter')?.value || 'all';
+    const grid = document.getElementById('shop-products-grid');
+    const countEl = document.getElementById('shop-results-count');
+
+    if (sort === 'bestsellers') {
+        if (grid) grid.innerHTML = '<div class="loading-state">🔥 Loading best sellers...</div>';
+        try {
+            const best = await fetch(`${currentApiBase}/products/best-sellers?top=50`).then(r => r.json());
+            if (countEl) countEl.textContent = `🔥 Best Sellers (${best.length})`;
+            renderShopGrid(best);
+        } catch (e) {
+            if (grid) grid.innerHTML = '<div class="loading-state" style="color:var(--accent-rose);">Failed to load best sellers.</div>';
+        }
+        return;
+    }
+
+    // For other sorts, work on the cached allProducts list
+    let list = [...allProducts];
+    if (sort === 'newest') {
+        list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        if (countEl) countEl.textContent = `🆕 Newest (${list.length})`;
+    } else if (sort === 'price-asc') {
+        list.sort((a, b) => (a.basePrice || a.price || 0) - (b.basePrice || b.price || 0));
+        if (countEl) countEl.textContent = `💰 Price: Low → High (${list.length})`;
+    } else if (sort === 'price-desc') {
+        list.sort((a, b) => (b.basePrice || b.price || 0) - (a.basePrice || a.price || 0));
+        if (countEl) countEl.textContent = `💎 Price: High → Low (${list.length})`;
+    } else {
+        if (countEl) countEl.textContent = `Showing ${list.length} Products`;
+    }
+    renderShopGrid(list);
+}
+
+// ─── Product Detail Modal ─────────────────────────────────────────────────────
+let _currentDetailProductId = null;
+let _currentDetailRating = 0;
+
+async function openProductDetail(productId) {
+    _currentDetailProductId = productId;
+    _currentDetailRating = 0;
+    const modal = document.getElementById('product-detail-modal');
+    if (!modal) return;
+    modal.style.display = 'block';
+    document.body.style.overflow = 'hidden';
+
+    // Reset to description tab
+    switchPdTab('description');
+
+    // Placeholder while loading
+    document.getElementById('pd-name').textContent = 'Loading...';
+    document.getElementById('pd-description').textContent = '';
+
+    try {
+        const d = await fetch(`${currentApiBase}/products/${productId}/detail`).then(r => r.json());
+
+        // Header
+        document.getElementById('pd-name').textContent = d.nameEn || d.NameEn || '';
+        document.getElementById('pd-name-ar').textContent = d.nameAr || d.NameAr || '';
+        document.getElementById('pd-price').textContent = `${d.price || d.Price || d.basePrice || 0} EGP`;
+        document.getElementById('pd-category').textContent = d.category || d.Category || '';
+        const stock = d.stock ?? d.Stock ?? 0;
+        document.getElementById('pd-stock').textContent = stock > 0 ? `✅ ${stock} in stock` : '⚠️ Out of stock';
+        const avg = d.averageRating || d.AverageRating || 0;
+        const cnt = d.reviewCount || d.ReviewCount || 0;
+        document.getElementById('pd-rating').textContent = avg > 0 ? `⭐ ${avg} (${cnt} reviews)` : '⭐ No ratings yet';
+        document.getElementById('pd-sold').textContent = `📦 ${d.soldCount || d.SoldCount || 0} sold`;
+
+        // Wishlist button
+        const wBtn = document.getElementById('pd-wishlist-btn');
+        if (wBtn) wBtn.textContent = wishlistProductIds.has(productId) ? '❤️ Saved' : '🤍 Save';
+
+        // Description tab
+        document.getElementById('pd-description').textContent = d.description || d.Description || 'No description available.';
+
+        // Features tab
+        const feats = d.featuresList || d.FeaturesList || [];
+        const featList = document.getElementById('pd-features-list');
+        const featEmpty = document.getElementById('pd-features-empty');
+        if (feats.length > 0) {
+            featList.innerHTML = feats.map(f => `
+                <li style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border-color);">
+                    <span style="color:var(--accent-blue);font-size:18px;line-height:1;">✦</span>
+                    <span style="color:var(--text-secondary);line-height:1.6;">${escapeHtml(f)}</span>
+                </li>`).join('');
+            featList.style.display = 'flex';
+            featEmpty.style.display = 'none';
+        } else {
+            featList.innerHTML = '';
+            featList.style.display = 'none';
+            featEmpty.style.display = 'block';
+        }
+
+        // Reviews tab
+        const reviews = d.reviews || d.Reviews || [];
+        const revList = document.getElementById('pd-reviews-list');
+        const revEmpty = document.getElementById('pd-reviews-empty');
+        if (reviews.length > 0) {
+            revList.innerHTML = reviews.map(r => {
+                const stars = '★'.repeat(r.rating || r.Rating) + '☆'.repeat(5 - (r.rating || r.Rating));
+                return `
+                <div style="background:var(--surface-2);border-radius:12px;padding:16px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <div>
+                            <strong>${escapeHtml(r.reviewerName || r.ReviewerName || 'Customer')}</strong>
+                            <span style="color:#f59e0b;margin-left:8px;letter-spacing:1px;">${stars}</span>
+                        </div>
+                        <span style="font-size:11px;color:var(--text-muted);">${new Date(r.createdAt || r.CreatedAt).toLocaleDateString()}</span>
+                    </div>
+                    <p style="margin:0;color:var(--text-secondary);line-height:1.6;">${escapeHtml(r.comment || r.Comment || '')}</p>
+                </div>`;
+            }).join('');
+            revList.style.display = 'flex';
+            revEmpty.style.display = 'none';
+        } else {
+            revList.innerHTML = '';
+            revList.style.display = 'none';
+            revEmpty.style.display = 'block';
+        }
+
+        // Show/hide review form
+        const reviewForm = document.getElementById('pd-review-form');
+        const loginMsg = document.getElementById('pd-review-login-msg');
+        if (reviewForm) {
+            if (currentToken) {
+                reviewForm.style.display = 'block';
+                if (loginMsg) loginMsg.style.display = 'none';
+            } else {
+                reviewForm.style.display = 'none';
+                if (loginMsg) { loginMsg.style.display = 'block'; loginMsg.parentElement.style.display = 'block'; }
+            }
+        }
+
+        // Shipping & Returns tab
+        const shippingEl = document.getElementById('pd-shipping-policy');
+        const returnEl = document.getElementById('pd-return-policy');
+        if (shippingEl) shippingEl.textContent = d.shippingPolicy || d.ShippingPolicy || 'يتم الشحن خلال 3-5 أيام عمل. نشحن لجميع المحافظات.';
+        if (returnEl) returnEl.textContent = d.returnPolicy || d.ReturnPolicy || 'يمكن إرجاع المنتج خلال 14 يوم من الاستلام في حالة وجود عيب مصنعي.';
+
+    } catch (err) {
+        document.getElementById('pd-description').textContent = 'Failed to load product details.';
+    }
+}
+
+function closeProductDetail(e) {
+    if (e && e.target !== document.getElementById('product-detail-modal')) return;
+    document.getElementById('product-detail-modal').style.display = 'none';
+    document.body.style.overflow = '';
+    _currentDetailProductId = null;
+}
+
+function switchPdTab(tab) {
+    document.querySelectorAll('.pd-tab').forEach(btn => {
+        const isActive = btn.dataset.tab === tab;
+        btn.style.borderBottom = isActive ? '2px solid var(--accent-blue)' : '2px solid transparent';
+        btn.style.color = isActive ? 'var(--accent-blue)' : 'var(--text-muted)';
+        btn.style.fontWeight = isActive ? '600' : '400';
+    });
+    document.querySelectorAll('.pd-tab-content').forEach(el => el.style.display = 'none');
+    const active = document.getElementById(`pd-tab-${tab}`);
+    if (active) active.style.display = 'block';
+}
+
+let _pdRatingSelected = 0;
+function setPdRating(val) {
+    _pdRatingSelected = val;
+    document.querySelectorAll('.pd-star').forEach(btn => {
+        btn.textContent = parseInt(btn.dataset.val) <= val ? '★' : '☆';
+        btn.style.color = parseInt(btn.dataset.val) <= val ? '#f59e0b' : 'var(--text-muted)';
+    });
+}
+
+async function submitProductReview() {
+    if (!currentToken) { showToast('error', 'يجب تسجيل الدخول أولاً'); return; }
+    if (_pdRatingSelected < 1) { showToast('error', 'اختر عدد النجوم أولاً'); return; }
+    const comment = document.getElementById('pd-review-comment')?.value?.trim() || '';
+    if (!comment) { showToast('error', 'اكتب تعليقاً'); return; }
+
+    try {
+        await fetch(`${currentApiBase}/products/${_currentDetailProductId}/reviews`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` },
+            body: JSON.stringify({ rating: _pdRatingSelected, comment })
+        });
+        showToast('success', '✅ تم إرسال تقييمك!');
+        document.getElementById('pd-review-comment').value = '';
+        setPdRating(0);
+        // Reload reviews
+        openProductDetail(_currentDetailProductId);
+        switchPdTab('reviews');
+    } catch (e) {
+        showToast('error', 'فشل إرسال التقييم');
+    }
+}
+
+async function toggleWishlistFromDetail() {
+    if (!_currentDetailProductId) return;
+    await toggleWishlist(_currentDetailProductId);
+    const wBtn = document.getElementById('pd-wishlist-btn');
+    if (wBtn) wBtn.textContent = wishlistProductIds.has(_currentDetailProductId) ? '❤️ Saved' : '🤍 Save';
+}
+
+function addToCartFromDetail() {
+    if (_currentDetailProductId) {
+        addToCart(_currentDetailProductId);
+        showToast('success', '🛒 Added to cart!');
+    }
+}
+
 
 async function loadShopOffers() {
     const container = document.getElementById('shop-offers-preview');
