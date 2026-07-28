@@ -1,5 +1,6 @@
 using Application.Common.Interfaces;
 using Domain.Entities;
+using QuestPDF.Drawing;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
@@ -8,6 +9,16 @@ namespace Infrastructure.Services;
 
 public class QuestPdfInvoiceGenerator : IInvoicePdfGenerator
 {
+    static QuestPdfInvoiceGenerator()
+    {
+        QuestPDF.Settings.License = LicenseType.Community;
+        var fontPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Fonts", "NotoSansArabic-Regular.ttf");
+        if (File.Exists(fontPath))
+        {
+            FontManager.RegisterFont(File.OpenRead(fontPath));
+        }
+    }
+
     public Task<byte[]> GenerateAsync(Invoice invoice, CancellationToken cancellationToken)
     {
         return Task.FromResult(GeneratePdf(invoice));
@@ -22,7 +33,8 @@ public class QuestPdfInvoiceGenerator : IInvoicePdfGenerator
                 page.Size(PageSizes.A4);
                 page.Margin(2, Unit.Centimetre);
                 page.PageColor(Colors.White);
-                page.DefaultTextStyle(x => x.FontSize(12));
+                page.DefaultTextStyle(x => x.FontFamily("Noto Sans Arabic").FontSize(12));
+                page.ContentFromRightToLeft();
 
                 page.Header()
                     .AlignCenter()

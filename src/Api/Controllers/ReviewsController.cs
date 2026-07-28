@@ -9,7 +9,6 @@ namespace Api.Controllers;
 
 [ApiController]
 [Route("api/reviews")]
-[Authorize]
 public class ReviewsController : ControllerBase
 {
     private readonly IUnitOfWork _unitOfWork;
@@ -19,7 +18,7 @@ public class ReviewsController : ControllerBase
         _unitOfWork = unitOfWork;
     }
 
-    public record CreateReviewRequest(Guid ProductId, int Rating, string Comment);
+    public record CreateReviewRequest(Guid ProductId, int Rating, string Comment, string? GuestName = null);
 
     [HttpGet("product/{productId}")]
     public async Task<IActionResult> GetByProduct(Guid productId, CancellationToken cancellationToken)
@@ -34,11 +33,12 @@ public class ReviewsController : ControllerBase
                 r.Rating,
                 r.Comment,
                 r.CreatedAt,
-                User = new
+                GuestName = r.GuestName,
+                User = r.User != null ? new
                 {
                     r.User.Id,
                     r.User.Name
-                }
+                } : null
             })
             .ToListAsync(cancellationToken);
 
@@ -46,34 +46,42 @@ public class ReviewsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Customer")]
     public async Task<IActionResult> Create([FromBody] CreateReviewRequest request, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
 
-        // Check if user has purchased this product (order must be Delivered)
-        var hasPurchased = await _unitOfWork.OrderItems.Query()
-            .Include(oi => oi.Order)
-            .AnyAsync(oi => oi.ProductId == request.ProductId && oi.Order.UserId == userId && oi.Order.Status == OrderStatus.Delivered, cancellationToken);
+        if (userId != Guid.Empty)
+        {
+            // Check if user has purchased this product (order must be Delivered)
+            var hasPurchased = await _unitOfWork.OrderItems.Query()
+                .Include(oi => oi.Order)
+                .AnyAsync(oi => oi.ProductId == request.ProductId && oi.Order.UserId == userId && oi.Order.Status == OrderStatus.Delivered, cancellationToken);
 
-        if (!hasPurchased)
-            return BadRequest(new { message = "You can only review products you have purchased and received." });
+            if (!hasPurchased)
+                return BadRequest(new { message = "You can only review products you have purchased and received." });
 
-        var existing = await _unitOfWork.Reviews.Query()
-            .AnyAsync(r => r.ProductId == request.ProductId && r.UserId == userId, cancellationToken);
+            var existing = await _unitOfWork.Reviews.Query()
+                .AnyAsync(r => r.ProductId == request.ProductId && r.UserId == userId, cancellationToken);
 
-        if (existing)
-            return BadRequest(new { message = "You have already reviewed this product." });
+            if (existing)
+                return BadRequest(new { message = "You have already reviewed this product." });
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(request.GuestName))
+                return BadRequest(new { message = "Please provide your name to leave a guest review." });
+        }
 
         var review = new Review
         {
             Id = Guid.NewGuid(),
             ProductId = request.ProductId,
-            UserId = userId,
+            UserId = userId != Guid.Empty ? userId : null,
+            GuestName = userId == Guid.Empty ? request.GuestName : null,
             Rating = request.Rating,
             Comment = request.Comment,
-            Status = ReviewStatus.Pending,
-            IsApproved = false,
+            Status = ReviewStatus.Visible,
+            IsApproved = true,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -169,16 +177,19 @@ public class ReviewsController : ControllerBase
         _unitOfWork.Reviews.Update(review);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        await _unitOfWork.Notifications.AddAsync(new Notification
+        if (review.UserId.HasValue)
         {
-            Id = Guid.NewGuid(),
-            UserId = review.UserId,
-            Type = NotificationType.ReviewResponse,
-            Message = "Your review has been approved and is now visible.",
-            RelatedEntityId = review.Id,
-            CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+            await _unitOfWork.Notifications.AddAsync(new Notification
+            {
+                Id = Guid.NewGuid(),
+                UserId = review.UserId.Value,
+                Type = NotificationType.ReviewResponse,
+                Message = "Your review has been approved and is now visible.",
+                RelatedEntityId = review.Id,
+                CreatedAt = DateTime.UtcNow
+            }, cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
 
         return Ok(new { message = "Review approved successfully." });
     }
@@ -198,16 +209,19 @@ public class ReviewsController : ControllerBase
         _unitOfWork.Reviews.Update(review);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        await _unitOfWork.Notifications.AddAsync(new Notification
+        if (review.UserId.HasValue)
         {
-            Id = Guid.NewGuid(),
-            UserId = review.UserId,
-            Type = NotificationType.ReviewResponse,
-            Message = "Your review has been rejected. Please check the guidelines.",
-            RelatedEntityId = review.Id,
-            CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+            await _unitOfWork.Notifications.AddAsync(new Notification
+            {
+                Id = Guid.NewGuid(),
+                UserId = review.UserId.Value,
+                Type = NotificationType.ReviewResponse,
+                Message = "Your review has been rejected. Please check the guidelines.",
+                RelatedEntityId = review.Id,
+                CreatedAt = DateTime.UtcNow
+            }, cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
 
         return Ok(new { message = "Review rejected successfully." });
     }
