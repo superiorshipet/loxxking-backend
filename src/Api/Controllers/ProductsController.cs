@@ -332,7 +332,8 @@ public class ProductsController : ControllerBase
                 }
                 catch
                 {
-                    // Skip invalid base64 payloads to prevent DB corruption
+                    // Fallback to storing the raw base64 string if Cloudinary upload fails
+                    processedImages.Add(img);
                 }
             }
             else

@@ -2348,18 +2348,8 @@ function addProductImageUrl() {
 }
 
 function removeProductImage(index) {
-    const productId = document.getElementById('prod-edit-id').value;
-    const urlToRemove = currentProductImages[index];
-    
     currentProductImages.splice(index, 1);
     renderProductImages();
-    
-    // If editing an existing product, fire DELETE to backend
-    if (productId && productId !== 'undefined') {
-        apiRequest(`/products/${productId}/images?url=${encodeURIComponent(urlToRemove)}`, {
-            method: 'DELETE'
-        }).catch(err => console.error('Failed to delete image on backend', err));
-    }
 }
 
 async function uploadProductImage() {
