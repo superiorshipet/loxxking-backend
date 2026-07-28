@@ -1,5 +1,6 @@
 using Api.Middlewares;
 using Application.Common.Interfaces;
+using Infrastructure.Services;
 using Infrastructure;
 using Infrastructure.Persistence;
 using Infrastructure.Repositories;
@@ -100,7 +101,15 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
 builder.Services.AddScoped<IFileStorageService, CloudinaryFileStorageService>();
 builder.Services.AddScoped<IInvoicePdfGenerator, QuestPdfInvoiceGenerator>();
-builder.Services.AddScoped<IOrderNumberGenerator, OrderNumberGenerator>(); // <--- ADDED
+builder.Services.AddScoped<IOrderNumberGenerator, OrderNumberGenerator>();
+
+// ==================== Notification Service (Email + WhatsApp) ====================
+builder.Services.AddHttpClient("callmebot", c =>
+{
+    c.BaseAddress = new Uri("https://api.callmebot.com");
+    c.Timeout = TimeSpan.FromSeconds(10);
+});
+builder.Services.AddScoped<IOrderNotificationService, OrderNotificationService>();
 
 // ==================== GeoLocation Service ====================
 builder.Services.AddGeoLocationService(builder.Configuration);

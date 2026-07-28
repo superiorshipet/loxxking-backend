@@ -13,11 +13,16 @@ public class OrdersController : ControllerBase
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IOrderNumberGenerator _orderNumberGenerator;
+    private readonly IOrderNotificationService _notifications;
 
-    public OrdersController(IUnitOfWork unitOfWork, IOrderNumberGenerator orderNumberGenerator)
+    public OrdersController(
+        IUnitOfWork unitOfWork,
+        IOrderNumberGenerator orderNumberGenerator,
+        IOrderNotificationService notifications)
     {
         _unitOfWork = unitOfWork;
         _orderNumberGenerator = orderNumberGenerator;
+        _notifications = notifications;
     }
 
     public record OrderItemRequest(Guid ProductId, int Quantity);
@@ -263,6 +268,38 @@ public class OrdersController : ControllerBase
         await _unitOfWork.Orders.AddAsync(order, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
+        // ── Fire invoice notifications (email + WhatsApp) ─────────────────────
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // Resolve product names for invoice
+                var productIds = order.OrderItems.Select(i => i.ProductId).ToList();
+                var products = await _unitOfWork.Products.Query()
+                    .Where(p => productIds.Contains(p.Id)).ToListAsync();
+
+                var country = await _unitOfWork.Countries.GetByIdAsync(order.CountryId, CancellationToken.None);
+
+                var notifData = new OrderNotificationData(
+                    OrderNumber:   order.OrderNumber,
+                    CustomerName:  request.Phone, // phone as name for anonymous orders
+                    CustomerPhone: request.Phone,
+                    Address:       request.Address,
+                    Country:       country?.Name ?? "—",
+                    PaymentMethod: order.PaymentMethod.ToString(),
+                    TotalAmount:   order.TotalAmount,
+                    Items: order.OrderItems.Select(i =>
+                    {
+                        var pName = products.FirstOrDefault(p => p.Id == i.ProductId)?.NameEn ?? i.ProductId.ToString();
+                        return new OrderNotificationItem(pName, i.Quantity, i.PriceAtOrder);
+                    }).ToList(),
+                    CreatedAt: order.CreatedAt
+                );
+                await _notifications.NotifyNewOrderAsync(notifData);
+            }
+            catch { /* swallow — notification must never break order flow */ }
+        }, CancellationToken.None);
+
         return CreatedAtAction(nameof(GetById), new { id = order.Id },
             new { order.Id, order.OrderNumber, order.TotalAmount, CountryId = resolvedCountryId });
 
@@ -438,6 +475,35 @@ public class OrdersController : ControllerBase
         order.TotalAmount = total;
         await _unitOfWork.Orders.AddAsync(order, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // ── Fire invoice notifications (email + WhatsApp) ─────────────────────
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var productIds = order.OrderItems.Select(i => i.ProductId).ToList();
+                var products = await _unitOfWork.Products.Query()
+                    .Where(p => productIds.Contains(p.Id)).ToListAsync();
+
+                var notifData = new OrderNotificationData(
+                    OrderNumber:   order.OrderNumber,
+                    CustomerName:  request.Name,
+                    CustomerPhone: request.Phone,
+                    Address:       request.Address,
+                    Country:       country.Name,
+                    PaymentMethod: order.PaymentMethod.ToString(),
+                    TotalAmount:   order.TotalAmount,
+                    Items: order.OrderItems.Select(i =>
+                    {
+                        var pName = products.FirstOrDefault(p => p.Id == i.ProductId)?.NameEn ?? i.ProductId.ToString();
+                        return new OrderNotificationItem(pName, i.Quantity, i.PriceAtOrder);
+                    }).ToList(),
+                    CreatedAt: order.CreatedAt
+                );
+                await _notifications.NotifyNewOrderAsync(notifData);
+            }
+            catch { /* swallow */ }
+        }, CancellationToken.None);
 
         return CreatedAtAction(nameof(GetById), new { id = order.Id },
             new { order.Id, order.OrderNumber, order.TotalAmount, Country = country.Name });
