@@ -621,6 +621,35 @@ async function openProductDetail(productId) {
         document.getElementById('pd-rating').textContent = avg > 0 ? `⭐ ${avg} (${cnt} reviews)` : '⭐ No ratings yet';
         document.getElementById('pd-sold').textContent = `📦 ${d.soldCount || d.SoldCount || 0} sold`;
 
+        // Images Gallery
+        const images = d.images || d.Images || [];
+        const mainImgEl = document.getElementById('pd-main-image');
+        const placeholderEl = document.getElementById('pd-emoji-placeholder');
+        const thumbnailsEl = document.getElementById('pd-thumbnails');
+        
+        if (images.length > 0) {
+            placeholderEl.style.display = 'none';
+            mainImgEl.style.display = 'block';
+            mainImgEl.src = images[0];
+            
+            if (images.length > 1) {
+                thumbnailsEl.style.display = 'flex';
+                thumbnailsEl.innerHTML = images.map((url, i) => `
+                    <img src="${escapeHtml(url)}" 
+                         onclick="document.getElementById('pd-main-image').src='${escapeHtml(url)}'"
+                         style="width:50px; height:50px; object-fit:cover; border-radius:8px; cursor:pointer; border:1px solid rgba(255,255,255,0.1); hover:border-color:#fff;" />
+                `).join('');
+            } else {
+                thumbnailsEl.style.display = 'none';
+                thumbnailsEl.innerHTML = '';
+            }
+        } else {
+            placeholderEl.style.display = 'block';
+            mainImgEl.style.display = 'none';
+            thumbnailsEl.style.display = 'none';
+            thumbnailsEl.innerHTML = '';
+        }
+
         // Wishlist button
         const wBtn = document.getElementById('pd-wishlist-btn');
         if (wBtn) wBtn.textContent = wishlistProductIds.has(productId) ? '❤️ Saved' : '🤍 Save';
@@ -964,6 +993,9 @@ async function populateCheckoutCountries() {
 // --- GUEST CHECKOUT ORDER CREATION ---
 
 async function placeGuestOrder() {
+    const btn = document.getElementById('place-order-btn');
+    if (btn.disabled) return;
+    
     const name = document.getElementById('checkout-name').value.trim();
     const phone = document.getElementById('checkout-phone').value.trim();
     const address = document.getElementById('checkout-address').value.trim();
@@ -990,6 +1022,10 @@ async function placeGuestOrder() {
         productId: item.id,
         quantity: item.quantity
     }));
+
+    btn.disabled = true;
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ Processing...';
 
     try {
         // Guest order — no auth token needed (backend is [AllowAnonymous])
@@ -1021,6 +1057,9 @@ async function placeGuestOrder() {
 
     } catch (err) {
         showToast('error', `Order Creation Failed: ${err.message}`);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
     }
 }
 
@@ -1380,7 +1419,7 @@ function renderAdminProducts(productsList) {
         return `
             <div class="product-card">
                 <div class="product-img">
-                    ${p.imageUrl ? `<img src="${p.imageUrl}" alt="${pNameEn}" onerror="this.onerror=null;this.parentNode.innerHTML='📦';">` : '📦'}
+                    ${(p.images && p.images.length > 0) ? `<img src="${p.images[0]}" alt="${pNameEn}" onerror="this.onerror=null;this.parentNode.innerHTML='📦';">` : ((p.Images && p.Images.length > 0) ? `<img src="${p.Images[0]}" alt="${pNameEn}" onerror="this.onerror=null;this.parentNode.innerHTML='📦';">` : '📦')}
                 </div>
                 <div class="product-body">
                     <div>
@@ -1426,6 +1465,11 @@ async function openAddProductModal() {
     document.getElementById('prod-name-ar').value = '';
     document.getElementById('prod-price').value = '';
     document.getElementById('prod-description').value = '';
+    
+    // Images UI reset
+    currentProductImages = [];
+    renderProductImages();
+    
     loadCategoriesDropdown();
     document.getElementById('add-product-modal').style.display = 'flex';
     await loadCountryPriceRows(null, null);
@@ -1440,6 +1484,11 @@ async function openEditProductModal(id) {
     document.getElementById('prod-name-ar').value = p.nameAr || p.NameAr || '';
     document.getElementById('prod-price').value = p.price || p.Price || p.basePrice || p.BasePrice || 0;
     document.getElementById('prod-description').value = p.description || p.Description || '';
+    
+    // Images UI init
+    currentProductImages = [...(p.images || p.Images || [])];
+    renderProductImages();
+
     loadCategoriesDropdown();
     const cId = p.categoryId || p.CategoryId;
     if (cId) setTimeout(() => { document.getElementById('prod-category-select').value = cId; }, 200);
@@ -1638,8 +1687,17 @@ async function saveProductForm() {
     const categoryId = document.getElementById('prod-category-select').value;
     const description = document.getElementById('prod-description').value.trim();
 
+    // Reset validation styles
+    const inputs = ['prod-name-en', 'prod-name-ar', 'prod-price', 'prod-category-select'];
+    inputs.forEach(id => document.getElementById(id).style.borderColor = 'rgba(255,255,255,0.15)');
+
     if (!nameEn || !nameAr || isNaN(basePrice) || !categoryId) {
-        showToast('error', 'Please fill in required fields (Names, Base Price, Category)');
+        if (!nameEn) document.getElementById('prod-name-en').style.borderColor = 'red';
+        if (!nameAr) document.getElementById('prod-name-ar').style.borderColor = 'red';
+        if (isNaN(basePrice)) document.getElementById('prod-price').style.borderColor = 'red';
+        if (!categoryId) document.getElementById('prod-category-select').style.borderColor = 'red';
+        
+        showToast('error', 'Please fill in required fields highlighted in red');
         return;
     }
 
@@ -1650,13 +1708,13 @@ async function saveProductForm() {
         if (editId) {
             await apiRequest(`/products/${editId}`, {
                 method: 'PUT',
-                body: JSON.stringify({ categoryId, nameAr, nameEn, description, basePrice })
+                body: JSON.stringify({ categoryId, nameAr, nameEn, description, basePrice, images: currentProductImages })
             });
             showToast('info', 'Product details updated...');
         } else {
             const created = await apiRequest('/products', {
                 method: 'POST',
-                body: JSON.stringify({ categoryId, nameAr, nameEn, description, basePrice })
+                body: JSON.stringify({ categoryId, nameAr, nameEn, description, basePrice, images: currentProductImages })
             });
             productId = created.id || created.Id;
             showToast('info', 'Product created, saving prices...');
@@ -2245,6 +2303,104 @@ function showToast(type, message) {
 // ============================================================
 // SETTINGS
 // ============================================================
+// --- PRODUCT IMAGES MANAGEMENT ---
+
+let currentProductImages = [];
+
+function renderProductImages() {
+    const gallery = document.getElementById('prod-images-gallery');
+    if (!gallery) return;
+    
+    gallery.innerHTML = '';
+    
+    if (currentProductImages.length === 0) {
+        gallery.innerHTML = '<div style="color:var(--text-muted); font-size:13px; font-style:italic;">No images added yet.</div>';
+        return;
+    }
+    
+    currentProductImages.forEach((url, index) => {
+        const isMain = index === 0;
+        const div = document.createElement('div');
+        div.style.position = 'relative';
+        div.style.width = '80px';
+        div.style.height = '80px';
+        div.style.borderRadius = '6px';
+        div.style.overflow = 'hidden';
+        div.style.border = isMain ? '2px solid var(--primary-color)' : '1px solid var(--border-light)';
+        
+        div.innerHTML = `
+            <img src="${escapeHtml(url)}" style="width:100%; height:100%; object-fit:cover;" onerror="this.src='https://via.placeholder.com/80?text=Error'">
+            ${isMain ? '<div style="position:absolute; bottom:0; left:0; right:0; background:rgba(99,102,241,0.9); color:#fff; font-size:10px; text-align:center; padding:2px;">Main</div>' : ''}
+            <button type="button" onclick="removeProductImage(${index})" style="position:absolute; top:2px; right:2px; background:rgba(220,38,38,0.9); color:white; border:none; border-radius:50%; width:20px; height:20px; cursor:pointer; font-size:12px; display:flex; align-items:center; justify-content:center;">✕</button>
+        `;
+        gallery.appendChild(div);
+    });
+}
+
+function addProductImageUrl() {
+    const input = document.getElementById('prod-image-url-input');
+    const url = input.value.trim();
+    if (!url) return;
+    
+    currentProductImages.push(url);
+    input.value = '';
+    renderProductImages();
+}
+
+function removeProductImage(index) {
+    const productId = document.getElementById('prod-edit-id').value;
+    const urlToRemove = currentProductImages[index];
+    
+    currentProductImages.splice(index, 1);
+    renderProductImages();
+    
+    // If editing an existing product, fire DELETE to backend
+    if (productId && productId !== 'undefined') {
+        apiRequest(`/products/${productId}/images?url=${encodeURIComponent(urlToRemove)}`, {
+            method: 'DELETE'
+        }).catch(err => console.error('Failed to delete image on backend', err));
+    }
+}
+
+async function uploadProductImage() {
+    const fileInput = document.getElementById('prod-image-file-input');
+    const files = fileInput.files;
+    if (!files || files.length === 0) {
+        showToast('warning', 'Please select at least one file first.');
+        return;
+    }
+    
+    const btn = document.getElementById('prod-upload-btn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳...';
+    btn.disabled = true;
+    
+    try {
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const reader = new FileReader();
+            
+            await new Promise((resolve, reject) => {
+                reader.onload = (e) => {
+                    currentProductImages.push(e.target.result);
+                    resolve();
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+        
+        fileInput.value = '';
+        renderProductImages();
+        showToast('success', 'Image(s) added successfully!');
+    } catch (err) {
+        showToast('error', 'Failed to read files: ' + err.message);
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
+
 async function loadSettings() {
     try {
         const data = await apiRequest('/settings/notifications');
@@ -2271,7 +2427,7 @@ async function saveSettings() {
     const greenApiToken = document.getElementById('settings-greenapi-token-input').value.trim();
     const smtpUser = document.getElementById('settings-smtp-user-input').value.trim();
     const smtpPass = document.getElementById('settings-smtp-pass-input').value.trim();
-    
+
     try {
         await apiRequest('/settings/notifications', {
             method: 'PUT',
@@ -2285,14 +2441,12 @@ async function saveSettings() {
             })
         });
         
+        msgEl.style.display = 'block';
+        msgEl.style.color = 'var(--accent-green)';
         msgEl.textContent = '✅ Settings saved successfully! (Will be applied immediately)';
-        msgEl.className = 'margin-top-sm alert alert-success';
+    } catch (err) {
         msgEl.style.display = 'block';
-        
-        setTimeout(() => { msgEl.style.display = 'none'; }, 4000);
-    } catch (e) {
-        msgEl.textContent = '❌ Failed to save settings: ' + e.message;
-        msgEl.className = 'margin-top-sm alert alert-error';
-        msgEl.style.display = 'block';
+        msgEl.style.color = 'var(--accent-rose)';
+        msgEl.textContent = '❌ Failed to save settings: ' + err.message;
     }
 }
