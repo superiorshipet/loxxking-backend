@@ -9,7 +9,15 @@ public static class DbSeeder
     public static async Task SeedCountriesAsync(AppDbContext context)
     {
         if (await context.Countries.AnyAsync())
+        {
+            // Ensure Turkey is added
+            if (!await context.Countries.AnyAsync(c => c.Name == "Turkey"))
+            {
+                context.Countries.Add(new Country { Id = Guid.NewGuid(), Name = "Turkey", Currency = "TRY", DefaultLanguage = "tr" });
+                await context.SaveChangesAsync();
+            }
             return;
+        }
 
         var countries = new List<Country>
         {
@@ -29,7 +37,8 @@ public static class DbSeeder
             new() { Id = Guid.NewGuid(), Name = "Libya", Currency = "LYD", DefaultLanguage = "ar" },
             new() { Id = Guid.NewGuid(), Name = "Tunisia", Currency = "TND", DefaultLanguage = "ar" },
             new() { Id = Guid.NewGuid(), Name = "Algeria", Currency = "DZD", DefaultLanguage = "ar" },
-            new() { Id = Guid.NewGuid(), Name = "Morocco", Currency = "MAD", DefaultLanguage = "ar" }
+            new() { Id = Guid.NewGuid(), Name = "Morocco", Currency = "MAD", DefaultLanguage = "ar" },
+            new() { Id = Guid.NewGuid(), Name = "Turkey", Currency = "TRY", DefaultLanguage = "tr" }
         };
 
         await context.Countries.AddRangeAsync(countries);

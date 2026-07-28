@@ -198,11 +198,13 @@ if ((Environment.GetEnvironmentVariable("RUN_MIGRATIONS") ?? "false")
     .Equals("true", StringComparison.OrdinalIgnoreCase))
 {
     using var scope = app.Services.CreateScope();
-
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
     await db.Database.MigrateAsync();
+}
 
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await DbSeeder.SeedCountriesAsync(db);
     await DbSeeder.SeedAdminAsync(db);
 }
