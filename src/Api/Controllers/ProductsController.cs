@@ -14,21 +14,25 @@ public class ProductsController : ControllerBase
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IDistributedCache _cache;
+    private readonly IFileStorageService _fileStorageService;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
     private const string VersionKey = "products:list:version";
 
-    public ProductsController(IUnitOfWork unitOfWork, IDistributedCache cache)
+    public ProductsController(IUnitOfWork unitOfWork, IDistributedCache cache, IFileStorageService fileStorageService)
     {
         _unitOfWork = unitOfWork;
         _cache = cache;
+        _fileStorageService = fileStorageService;
     }
 
     public record CreateProductRequest(
         Guid CategoryId, string NameAr, string NameEn, string Description, decimal BasePrice,
-        string? Features = null, string? ShippingPolicy = null, string? ReturnPolicy = null);
+        string? Features = null, string? ShippingPolicy = null, string? ReturnPolicy = null,
+        List<string>? Images = null);
     public record UpdateProductRequest(
         Guid CategoryId, string NameAr, string NameEn, string Description, decimal BasePrice,
-        string? Features = null, string? ShippingPolicy = null, string? ReturnPolicy = null);
+        string? Features = null, string? ShippingPolicy = null, string? ReturnPolicy = null,
+        List<string>? Images = null);
     public record UpsertPriceRequest(Guid CountryId, decimal Price);
     public record UpsertInventoryRequest(Guid CountryId, int Quantity);
     public record SetPriceRequest(decimal Price);
@@ -81,7 +85,8 @@ public class ProductsController : ControllerBase
                 p.Description,
                 p.BasePrice,
                 Category = p.Category.NameEn,
-                p.CreatedAt
+                p.CreatedAt,
+                p.Images
             })
             .ToListAsync(cancellationToken);
 
@@ -190,6 +195,8 @@ public class ProductsController : ControllerBase
         if (!categoryExists)
             return BadRequest(new { message = "Invalid category." });
 
+        var processedImages = await ProcessBase64ImagesAsync(request.Images, cancellationToken);
+
         var product = new Product
         {
             Id = Guid.NewGuid(),
@@ -201,6 +208,7 @@ public class ProductsController : ControllerBase
             ShippingPolicy = request.ShippingPolicy,
             ReturnPolicy = request.ReturnPolicy,
             BasePrice = request.BasePrice,
+            Images = processedImages,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -228,6 +236,10 @@ public class ProductsController : ControllerBase
         product.ShippingPolicy= request.ShippingPolicy;
         product.ReturnPolicy  = request.ReturnPolicy;
         product.BasePrice     = request.BasePrice;
+        if (request.Images != null) 
+        {
+            product.Images = await ProcessBase64ImagesAsync(request.Images, cancellationToken);
+        }
 
         _unitOfWork.Products.Update(product);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
@@ -235,6 +247,100 @@ public class ProductsController : ControllerBase
         await InvalidateProductCacheAsync(cancellationToken);
 
         return Ok(new { product.Id });
+    }
+
+    [HttpPost("{id}/images")]
+    [Authorize(Roles = "Admin,StoreManager")]
+    public async Task<IActionResult> UploadImage(Guid id, IFormFile file, CancellationToken cancellationToken)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest("No image provided.");
+
+        var product = await _unitOfWork.Products.GetByIdAsync(id, cancellationToken);
+        if (product is null)
+            return NotFound();
+
+        var imageUrl = await _fileStorageService.UploadAsync(file, "loxxking/products", cancellationToken);
+        
+        product.Images.Add(imageUrl);
+        _unitOfWork.Products.Update(product);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        
+        await InvalidateProductCacheAsync(cancellationToken);
+        return Ok(new { imageUrl });
+    }
+
+    [HttpDelete("{id}/images")]
+    [Authorize(Roles = "Admin,StoreManager")]
+    public async Task<IActionResult> DeleteImage(Guid id, [FromQuery] string url, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return BadRequest("No URL provided.");
+
+        var product = await _unitOfWork.Products.GetByIdAsync(id, cancellationToken);
+        if (product is null)
+            return NotFound();
+
+        if (product.Images.Remove(url))
+        {
+            _unitOfWork.Products.Update(product);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            
+            // Try to delete from Cloudinary in background to not block
+            _ = _fileStorageService.DeleteAsync(url, CancellationToken.None);
+        }
+
+        await InvalidateProductCacheAsync(cancellationToken);
+        return NoContent();
+    }
+
+    private async Task<List<string>> ProcessBase64ImagesAsync(List<string>? images, CancellationToken cancellationToken)
+    {
+        if (images == null || images.Count == 0) return new List<string>();
+
+        var processedImages = new List<string>();
+        foreach (var img in images)
+        {
+            if (img.StartsWith("data:image/"))
+            {
+                try
+                {
+                    var commaIndex = img.IndexOf(',');
+                    if (commaIndex > -1)
+                    {
+                        var base64Data = img.Substring(commaIndex + 1);
+                        var bytes = Convert.FromBase64String(base64Data);
+                        
+                        var mimeTypePart = img.Substring(0, commaIndex).Split(';')[0];
+                        var extension = mimeTypePart.Split('/').LastOrDefault() ?? "png";
+                        var fileName = $"upload_{Guid.NewGuid()}.{extension}";
+
+                        using var stream = new MemoryStream(bytes);
+                        var formFile = new FormFile(stream, 0, stream.Length, "file", fileName)
+                        {
+                            Headers = new HeaderDictionary(),
+                            ContentType = mimeTypePart.Replace("data:", "")
+                        };
+
+                        var uploadedUrl = await _fileStorageService.UploadAsync(formFile, "loxxking/products", cancellationToken);
+                        processedImages.Add(uploadedUrl);
+                    }
+                    else
+                    {
+                        processedImages.Add(img);
+                    }
+                }
+                catch
+                {
+                    // Skip invalid base64 payloads to prevent DB corruption
+                }
+            }
+            else
+            {
+                processedImages.Add(img);
+            }
+        }
+        return processedImages;
     }
 
     // ─── GET /api/products/best-sellers ──────────────────────────────────────
@@ -343,6 +449,7 @@ public class ProductsController : ControllerBase
             AverageRating = Math.Round(avgRating, 1),
             ReviewCount = reviews.Count,
             Reviews = reviews,
+            product.Images,
             product.CreatedAt
         });
     }

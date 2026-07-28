@@ -157,7 +157,11 @@
                 <div style="background:linear-gradient(135deg,#4f46e5,#7c3aed);padding:28px 28px 22px;color:#fff;position:relative;">
                     <button onclick="document.getElementById('product-detail-modal').style.display='none';document.body.style.overflow='';" style="position:absolute;top:14px;right:14px;background:rgba(255,255,255,0.2);border:none;border-radius:50%;width:34px;height:34px;color:#fff;font-size:16px;cursor:pointer;line-height:1;">&#x2715;</button>
                     <div style="display:flex;align-items:flex-start;gap:16px;">
-                        <div style="font-size:52px;min-width:56px;text-align:center;margin-top:4px;">&#x1F4E6;</div>
+                        <div id="pd-image-gallery" style="width:200px; min-width:200px; display:flex; flex-direction:column; gap:8px;">
+                            <img id="pd-main-image" src="" style="width:100%; height:200px; object-fit:cover; border-radius:12px; background:rgba(0,0,0,0.2); display:none;" />
+                            <div id="pd-emoji-placeholder" style="font-size:82px; text-align:center; padding:40px 0; background:rgba(0,0,0,0.2); border-radius:12px; display:block;">📦</div>
+                            <div id="pd-thumbnails" style="display:flex; gap:6px; overflow-x:auto; padding-bottom:4px;"></div>
+                        </div>
                         <div style="flex:1;min-width:0;">
                             <h2 id="pd-name" style="margin:0 0 3px;font-size:20px;line-height:1.3;"></h2>
                             <div id="pd-name-ar" style="opacity:0.75;font-size:13px;direction:rtl;margin-bottom:8px;"></div>
@@ -655,7 +659,7 @@
                     </section>
 
                     <!-- SETTINGS TAB -->
-                    <section id="tab-settings" class="tab-page" style="display: none;">
+                    <section id="tab-settings" class="tab-page">
                         <div class="header-flex">
                             <h2>⚙️ Application Settings</h2>
                         </div>
@@ -782,7 +786,7 @@
                 </div>
                 <div class="modal-actions">
                     <button class="btn btn-secondary" onclick="closeGuestCheckoutModal()">Back to Cart</button>
-                    <button class="btn btn-success" onclick="placeGuestOrder()">🎉 Complete Order Now</button>
+                    <button id="place-order-btn" class="btn btn-success" onclick="placeGuestOrder()">🎉 Complete Order Now</button>
                 </div>
             </div>
         </div>
@@ -895,6 +899,35 @@
                         <textarea id="prod-description" rows="2" placeholder="Enter product details..."></textarea>
                     </div>
 
+                    <!-- Images Management -->
+                    <div style="margin-top:16px; padding:12px; border: 1px solid var(--border-light); border-radius: 6px; background-color: var(--surface-hover);">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <label style="margin:0;font-weight:600;">🖼️ Product Images</label>
+                            <small style="color:var(--text-muted);">First image is the main thumbnail</small>
+                        </div>
+                        
+                        <!-- URL Input -->
+                        <div class="form-group" style="margin-bottom:8px;">
+                            <div style="display:flex;gap:8px;">
+                                <input type="text" id="prod-image-url-input" placeholder="Paste image URL here...">
+                                <button type="button" class="btn btn-secondary" onclick="addProductImageUrl()">Add URL</button>
+                            </div>
+                        </div>
+
+                        <!-- File Upload -->
+                        <div id="prod-image-upload-wrapper" style="margin-bottom:12px;">
+                            <div style="display:flex;gap:8px;">
+                                <input type="file" id="prod-image-file-input" accept="image/*" multiple class="input-field" style="padding: 4px;">
+                                <button type="button" id="prod-upload-btn" class="btn btn-primary" onclick="uploadProductImage()">Upload File(s)</button>
+                            </div>
+                        </div>
+
+                        <!-- Image Gallery -->
+                        <div id="prod-images-gallery" style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;">
+                            <!-- Images will be injected here -->
+                        </div>
+                    </div>
+
                     <!-- Per-Country Pricing & Stock -->
                     <div style="margin-top:16px;">
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -963,6 +996,6 @@
         <div id="toast-container" class="toast-container"></div>
     </div>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=2"></script>
 </body>
 </html>
