@@ -61,11 +61,8 @@ public class SettingsController : ControllerBase
 
         if (document != null && document["Notifications"] is JsonObject notifications)
         {
-            if (!string.IsNullOrWhiteSpace(dto.BusinessEmail))
-                notifications["BusinessEmail"] = dto.BusinessEmail;
-                
-            if (!string.IsNullOrWhiteSpace(dto.WhatsAppPhone))
-                notifications["WhatsAppPhone"] = dto.WhatsAppPhone;
+            notifications["BusinessEmail"] = dto.BusinessEmail;
+            notifications["WhatsAppPhone"] = dto.WhatsAppPhone;
             
             if (!string.IsNullOrWhiteSpace(dto.GreenApiInstanceId))
                 notifications["GreenApiInstanceId"] = dto.GreenApiInstanceId;
@@ -82,10 +79,7 @@ public class SettingsController : ControllerBase
                     smtp["Password"] = dto.SmtpPassword;
             }
 
-            var options = new JsonSerializerOptions { 
-                WriteIndented = true,
-                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping 
-            };
+            var options = new JsonSerializerOptions { WriteIndented = true };
             var updatedJson = document.ToJsonString(options);
 
             await System.IO.File.WriteAllTextAsync(filePath, updatedJson);
