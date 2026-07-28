@@ -1314,6 +1314,7 @@ function switchTab(tabId) {
         case 'chat': loadSupportConversations(); break;
         case 'analytics': loadSiteVisits(); break;
         case 'auth': updateAuthProfileView(); break;
+        case 'settings': loadSettings(); break;
     }
 }
 
@@ -2239,4 +2240,59 @@ function showToast(type, message) {
         toast.style.transition = 'all 0.4s ease';
         setTimeout(() => toast.remove(), 400);
     }, 4000);
+}
+
+// ============================================================
+// SETTINGS
+// ============================================================
+async function loadSettings() {
+    try {
+        const data = await apiRequest('/settings/notifications');
+        if (data) {
+            document.getElementById('settings-email-input').value = data.businessEmail || '';
+            document.getElementById('settings-whatsapp-input').value = data.whatsAppPhone || '';
+            document.getElementById('settings-greenapi-instance-input').value = data.greenApiInstanceId || '';
+            document.getElementById('settings-greenapi-token-input').value = ''; // Don't expose token
+            document.getElementById('settings-smtp-user-input').value = data.smtpUsername || '';
+            document.getElementById('settings-smtp-pass-input').value = ''; // Don't expose password
+        }
+    } catch (e) {
+        console.error('Failed to load settings', e);
+    }
+}
+
+async function saveSettings() {
+    const msgEl = document.getElementById('settings-save-message');
+    msgEl.style.display = 'none';
+    
+    const email = document.getElementById('settings-email-input').value.trim();
+    const phone = document.getElementById('settings-whatsapp-input').value.trim();
+    const greenApiInstance = document.getElementById('settings-greenapi-instance-input').value.trim();
+    const greenApiToken = document.getElementById('settings-greenapi-token-input').value.trim();
+    const smtpUser = document.getElementById('settings-smtp-user-input').value.trim();
+    const smtpPass = document.getElementById('settings-smtp-pass-input').value.trim();
+    
+    try {
+        await apiRequest('/settings/notifications', {
+            method: 'PUT',
+            body: JSON.stringify({ 
+                businessEmail: email, 
+                whatsAppPhone: phone,
+                greenApiInstanceId: greenApiInstance,
+                greenApiToken: greenApiToken,
+                smtpUsername: smtpUser,
+                smtpPassword: smtpPass
+            })
+        });
+        
+        msgEl.textContent = '✅ Settings saved successfully! (Will be applied immediately)';
+        msgEl.className = 'margin-top-sm alert alert-success';
+        msgEl.style.display = 'block';
+        
+        setTimeout(() => { msgEl.style.display = 'none'; }, 4000);
+    } catch (e) {
+        msgEl.textContent = '❌ Failed to save settings: ' + e.message;
+        msgEl.className = 'margin-top-sm alert alert-error';
+        msgEl.style.display = 'block';
+    }
 }

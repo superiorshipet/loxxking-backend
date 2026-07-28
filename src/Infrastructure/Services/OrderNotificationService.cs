@@ -91,11 +91,84 @@ public class OrderNotificationService : IOrderNotificationService
             return;
         }
 
-        var text = BuildWhatsAppMessage(order);
-        // Clean phone number (remove + and spaces) and append @c.us
-        var cleanPhone = new string(waPhone.Where(char.IsDigit).ToArray());
-        var chatId = $"{cleanPhone}@c.us";
+        // 1. Send to Admin
+        var adminText = BuildWhatsAppMessage(order);
+        var adminPhone = new string(waPhone.Where(char.IsDigit).ToArray());
+        await SendWhatsAppToChatAsync(order, adminPhone, adminText, instanceId, apiToken, ct);
 
+        // 2. Send to Customer
+        if (!string.IsNullOrWhiteSpace(order.CustomerPhone))
+        {
+            var customerText = BuildCustomerWhatsAppMessage(order);
+            var customerPhone = new string(order.CustomerPhone.Where(char.IsDigit).ToArray());
+            
+            // Format phone with country code if missing
+            var dialCode = GetCountryDialCode(order.Country);
+            if (!string.IsNullOrEmpty(dialCode))
+            {
+                if (customerPhone.StartsWith("0"))
+                    customerPhone = dialCode + customerPhone.Substring(1);
+                else if (!customerPhone.StartsWith(dialCode))
+                    customerPhone = dialCode + customerPhone;
+            }
+
+            if (customerPhone.Length > 8) // Basic sanity check
+            {
+                await SendWhatsAppToChatAsync(order, customerPhone, customerText, instanceId, apiToken, ct);
+            }
+        }
+    }
+
+    private static string GetCountryDialCode(string? countryName)
+    {
+        if (string.IsNullOrWhiteSpace(countryName)) return "";
+        return countryName.Trim().ToLowerInvariant() switch
+        {
+            "egypt" => "20",
+            "مصر" => "20",
+            "qatar" => "974",
+            "قطر" => "974",
+            "saudi arabia" => "966",
+            "ksa" => "966",
+            "السعودية" => "966",
+            "uae" => "971",
+            "united arab emirates" => "971",
+            "الامارات" => "971",
+            "kuwait" => "965",
+            "الكويت" => "965",
+            "tunisia" => "216",
+            "تونس" => "216",
+            "libya" => "218",
+            "ليبيا" => "218",
+            "algeria" => "213",
+            "الجزائر" => "213",
+            "yemen" => "967",
+            "اليمن" => "967",
+            "jordan" => "962",
+            "الاردن" => "962",
+            "syria" => "963",
+            "سوريا" => "963",
+            "lebanon" => "961",
+            "لبنان" => "961",
+            "morocco" => "212",
+            "المغرب" => "212",
+            "iraq" => "964",
+            "العراق" => "964",
+            "bahrain" => "973",
+            "البحرين" => "973",
+            "oman" => "968",
+            "عمان" => "968",
+            "palestine" => "970",
+            "فلسطين" => "970",
+            "turkey" => "90",
+            "تركيا" => "90",
+            _ => ""
+        };
+    }
+
+    private async Task SendWhatsAppToChatAsync(OrderNotificationData order, string cleanPhone, string text, string instanceId, string apiToken, CancellationToken ct)
+    {
+        var chatId = $"{cleanPhone}@c.us";
         try
         {
             var http = _httpClientFactory.CreateClient("callmebot");
@@ -123,17 +196,17 @@ public class OrderNotificationService : IOrderNotificationService
             
             if (resp.IsSuccessStatusCode)
             {
-                _logger.LogInformation("WhatsApp sent for order {OrderNumber}", order.OrderNumber);
+                _logger.LogInformation("WhatsApp sent for order {OrderNumber} to {Phone}", order.OrderNumber, cleanPhone);
             }
             else
             {
                 var err = await resp.Content.ReadAsStringAsync(ct);
-                _logger.LogWarning("WhatsApp returned {Status} for order {OrderNumber}. Body: {Body}", resp.StatusCode, order.OrderNumber, err);
+                _logger.LogWarning("WhatsApp returned {Status} for order {OrderNumber} to {Phone}. Body: {Body}", resp.StatusCode, order.OrderNumber, cleanPhone, err);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send WhatsApp for order {OrderNumber}", order.OrderNumber);
+            _logger.LogError(ex, "Failed to send WhatsApp for order {OrderNumber} to {Phone}", order.OrderNumber, cleanPhone);
         }
     }
 
@@ -155,6 +228,27 @@ public class OrderNotificationService : IOrderNotificationService
 ━━━━━━━━━━━━━━━━━━━━
 💰 *Total: {o.TotalAmount:N2} EGP*
 🕒 {o.CreatedAt:dd MMM yyyy HH:mm} UTC
+""";
+    }
+
+    private static string BuildCustomerWhatsAppMessage(OrderNotificationData o)
+    {
+        var items = string.Join("\n", o.Items.Select(i => $"  • {i.ProductName} x{i.Quantity}"));
+        return $"""
+🎉 *شكراً لطلبك من LoxxKing!*
+━━━━━━━━━━━━━━━━━━━━
+أهلاً بك {o.CustomerName}،
+تم استلام طلبك بنجاح، رقم الطلب الخاص بك هو: *#{o.OrderNumber}*
+
+مرفق مع هذه الرسالة إيصال الدفع بصيغة PDF.
+
+📦 *مشترياتك:*
+{items}
+━━━━━━━━━━━━━━━━━━━━
+💰 *الإجمالي: {o.TotalAmount:N2} EGP*
+
+سيتم التواصل معك قريباً لتأكيد الشحن.
+نتمنى لك يوماً سعيداً! 👑
 """;
     }
 
