@@ -17,7 +17,14 @@ public class SettingsController : ControllerBase
         _env = env;
     }
 
-    public record NotificationSettingsDto(string BusinessEmail, string WhatsAppPhone);
+    public record NotificationSettingsDto(
+        string BusinessEmail, 
+        string WhatsAppPhone,
+        string GreenApiInstanceId,
+        string GreenApiToken,
+        string SmtpUsername,
+        string SmtpPassword
+    );
 
     [HttpGet("notifications")]
     public async Task<IActionResult> GetNotificationSettings()
@@ -32,8 +39,14 @@ public class SettingsController : ControllerBase
         var notifications = document?["Notifications"];
         var email = notifications?["BusinessEmail"]?.ToString() ?? "";
         var phone = notifications?["WhatsAppPhone"]?.ToString() ?? "";
+        var instanceId = notifications?["GreenApiInstanceId"]?.ToString() ?? "";
+        var token = notifications?["GreenApiToken"]?.ToString() ?? "";
+        
+        var smtp = notifications?["Smtp"];
+        var smtpUser = smtp?["Username"]?.ToString() ?? "";
+        var smtpPass = smtp?["Password"]?.ToString() ?? "";
 
-        return Ok(new NotificationSettingsDto(email, phone));
+        return Ok(new NotificationSettingsDto(email, phone, instanceId, token, smtpUser, smtpPass));
     }
 
     [HttpPut("notifications")]
@@ -50,6 +63,21 @@ public class SettingsController : ControllerBase
         {
             notifications["BusinessEmail"] = dto.BusinessEmail;
             notifications["WhatsAppPhone"] = dto.WhatsAppPhone;
+            
+            if (!string.IsNullOrWhiteSpace(dto.GreenApiInstanceId))
+                notifications["GreenApiInstanceId"] = dto.GreenApiInstanceId;
+            
+            if (!string.IsNullOrWhiteSpace(dto.GreenApiToken))
+                notifications["GreenApiToken"] = dto.GreenApiToken;
+
+            if (notifications["Smtp"] is JsonObject smtp)
+            {
+                if (!string.IsNullOrWhiteSpace(dto.SmtpUsername))
+                    smtp["Username"] = dto.SmtpUsername;
+                    
+                if (!string.IsNullOrWhiteSpace(dto.SmtpPassword))
+                    smtp["Password"] = dto.SmtpPassword;
+            }
 
             var options = new JsonSerializerOptions { WriteIndented = true };
             var updatedJson = document.ToJsonString(options);

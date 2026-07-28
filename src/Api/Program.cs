@@ -146,8 +146,8 @@ builder.Services.AddRateLimiter(options =>
                 factory: _ => new FixedWindowRateLimiterOptions
                 {
                     Window = TimeSpan.FromMinutes(1),
-                    PermitLimit = 100,
-                    QueueLimit = 0
+                    PermitLimit = 1000,
+                    QueueLimit = 100
                 }));
 
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;

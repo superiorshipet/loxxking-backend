@@ -2251,6 +2251,10 @@ async function loadSettings() {
         if (data) {
             document.getElementById('settings-email-input').value = data.businessEmail || '';
             document.getElementById('settings-whatsapp-input').value = data.whatsAppPhone || '';
+            document.getElementById('settings-greenapi-instance-input').value = data.greenApiInstanceId || '';
+            document.getElementById('settings-greenapi-token-input').value = ''; // Don't expose token
+            document.getElementById('settings-smtp-user-input').value = data.smtpUsername || '';
+            document.getElementById('settings-smtp-pass-input').value = ''; // Don't expose password
         }
     } catch (e) {
         console.error('Failed to load settings', e);
@@ -2263,11 +2267,22 @@ async function saveSettings() {
     
     const email = document.getElementById('settings-email-input').value.trim();
     const phone = document.getElementById('settings-whatsapp-input').value.trim();
+    const greenApiInstance = document.getElementById('settings-greenapi-instance-input').value.trim();
+    const greenApiToken = document.getElementById('settings-greenapi-token-input').value.trim();
+    const smtpUser = document.getElementById('settings-smtp-user-input').value.trim();
+    const smtpPass = document.getElementById('settings-smtp-pass-input').value.trim();
     
     try {
         await apiRequest('/settings/notifications', {
             method: 'PUT',
-            body: JSON.stringify({ businessEmail: email, whatsAppPhone: phone })
+            body: JSON.stringify({ 
+                businessEmail: email, 
+                whatsAppPhone: phone,
+                greenApiInstanceId: greenApiInstance,
+                greenApiToken: greenApiToken,
+                smtpUsername: smtpUser,
+                smtpPassword: smtpPass
+            })
         });
         
         msgEl.textContent = '✅ Settings saved successfully! (Will be applied immediately)';
