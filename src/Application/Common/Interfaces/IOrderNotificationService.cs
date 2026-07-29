@@ -9,7 +9,8 @@ public record OrderNotificationData(
     string PaymentMethod,
     decimal TotalAmount,
     List<OrderNotificationItem> Items,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    byte[]? PdfAttachment = null
 );
 
 public record OrderNotificationItem(string ProductName, int Quantity, decimal UnitPrice);

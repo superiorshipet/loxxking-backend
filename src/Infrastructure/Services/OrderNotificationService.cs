@@ -4,6 +4,7 @@ using MailKit.Security;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MimeKit;
+using System.Net.Http.Json;
 
 namespace Infrastructure.Services;
 
@@ -57,6 +58,10 @@ public class OrderNotificationService : IOrderNotificationService
             message.Subject = $"🛒 New Order #{order.OrderNumber} — {order.TotalAmount:N2} EGP";
 
             var builder = new BodyBuilder { HtmlBody = BuildInvoiceHtml(order) };
+            if (order.PdfAttachment != null)
+            {
+                builder.Attachments.Add($"Invoice_{order.OrderNumber}.pdf", order.PdfAttachment, new ContentType("application", "pdf"));
+            }
             message.Body = builder.ToMessageBody();
 
             using var client = new SmtpClient();
@@ -73,30 +78,58 @@ public class OrderNotificationService : IOrderNotificationService
         }
     }
 
-    // ─── WHATSAPP via CallMeBot ───────────────────────────────────────────────
+    // ─── WHATSAPP via Green-API ───────────────────────────────────────────────
     private async Task SendWhatsAppAsync(OrderNotificationData order, CancellationToken ct)
     {
         var waPhone  = _config["Notifications:WhatsAppPhone"] ?? "+905388952964";
-        var apiKey   = _config["Notifications:CallMeBotApiKey"] ?? "";
+        var instanceId = _config["Notifications:GreenApiInstanceId"] ?? "";
+        var apiToken = _config["Notifications:GreenApiToken"] ?? "";
 
-        if (string.IsNullOrWhiteSpace(apiKey))
+        if (string.IsNullOrWhiteSpace(instanceId) || string.IsNullOrWhiteSpace(apiToken))
         {
-            _logger.LogWarning("CallMeBot API key not configured — skipping WhatsApp for order {OrderNumber}", order.OrderNumber);
+            _logger.LogWarning("GreenAPI credentials not configured — skipping WhatsApp for order {OrderNumber}", order.OrderNumber);
             return;
         }
 
         var text = BuildWhatsAppMessage(order);
-        var encoded = Uri.EscapeDataString(text);
-        var url = $"https://api.callmebot.com/whatsapp.php?phone={waPhone}&text={encoded}&apikey={apiKey}";
+        // Clean phone number (remove + and spaces) and append @c.us
+        var cleanPhone = new string(waPhone.Where(char.IsDigit).ToArray());
+        var chatId = $"{cleanPhone}@c.us";
 
         try
         {
             var http = _httpClientFactory.CreateClient("callmebot");
-            var resp = await http.GetAsync(url, ct);
-            if (resp.IsSuccessStatusCode)
-                _logger.LogInformation("WhatsApp sent for order {OrderNumber}", order.OrderNumber);
+            HttpResponseMessage resp;
+
+            if (order.PdfAttachment != null)
+            {
+                var url = $"https://api.green-api.com/waInstance{instanceId}/sendFileByUpload/{apiToken}";
+                using var form = new MultipartFormDataContent();
+                form.Add(new StringContent(chatId), "chatId");
+                form.Add(new StringContent(text), "caption");
+                
+                var fileContent = new ByteArrayContent(order.PdfAttachment);
+                fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf");
+                form.Add(fileContent, "file", $"Invoice_{order.OrderNumber}.pdf");
+                
+                resp = await http.PostAsync(url, form, ct);
+            }
             else
-                _logger.LogWarning("WhatsApp returned {Status} for order {OrderNumber}", resp.StatusCode, order.OrderNumber);
+            {
+                var url = $"https://api.green-api.com/waInstance{instanceId}/sendMessage/{apiToken}";
+                var payload = new { chatId, message = text };
+                resp = await http.PostAsJsonAsync(url, payload, ct);
+            }
+            
+            if (resp.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("WhatsApp sent for order {OrderNumber}", order.OrderNumber);
+            }
+            else
+            {
+                var err = await resp.Content.ReadAsStringAsync(ct);
+                _logger.LogWarning("WhatsApp returned {Status} for order {OrderNumber}. Body: {Body}", resp.StatusCode, order.OrderNumber, err);
+            }
         }
         catch (Exception ex)
         {

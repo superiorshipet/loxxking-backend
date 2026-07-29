@@ -14,15 +14,18 @@ public class OrdersController : ControllerBase
     private readonly IUnitOfWork _unitOfWork;
     private readonly IOrderNumberGenerator _orderNumberGenerator;
     private readonly IOrderNotificationService _notifications;
+    private readonly IInvoicePdfGenerator _pdfGenerator;
 
     public OrdersController(
         IUnitOfWork unitOfWork,
         IOrderNumberGenerator orderNumberGenerator,
-        IOrderNotificationService notifications)
+        IOrderNotificationService notifications,
+        IInvoicePdfGenerator pdfGenerator)
     {
         _unitOfWork = unitOfWork;
         _orderNumberGenerator = orderNumberGenerator;
         _notifications = notifications;
+        _pdfGenerator = pdfGenerator;
     }
 
     public record OrderItemRequest(Guid ProductId, int Quantity);
@@ -269,36 +272,46 @@ public class OrdersController : ControllerBase
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         // ── Fire invoice notifications (email + WhatsApp) ─────────────────────
-        _ = Task.Run(async () =>
+        try
         {
-            try
+            // Resolve product names for invoice
+            var productIds = order.OrderItems.Select(i => i.ProductId).ToList();
+            var products = await _unitOfWork.Products.Query()
+                .Where(p => productIds.Contains(p.Id)).ToListAsync(cancellationToken);
+
+            var country = await _unitOfWork.Countries.GetByIdAsync(order.CountryId, cancellationToken);
+            
+            foreach (var item in order.OrderItems)
             {
-                // Resolve product names for invoice
-                var productIds = order.OrderItems.Select(i => i.ProductId).ToList();
-                var products = await _unitOfWork.Products.Query()
-                    .Where(p => productIds.Contains(p.Id)).ToListAsync();
-
-                var country = await _unitOfWork.Countries.GetByIdAsync(order.CountryId, CancellationToken.None);
-
-                var notifData = new OrderNotificationData(
-                    OrderNumber:   order.OrderNumber,
-                    CustomerName:  request.Phone, // phone as name for anonymous orders
-                    CustomerPhone: request.Phone,
-                    Address:       request.Address,
-                    Country:       country?.Name ?? "—",
-                    PaymentMethod: order.PaymentMethod.ToString(),
-                    TotalAmount:   order.TotalAmount,
-                    Items: order.OrderItems.Select(i =>
-                    {
-                        var pName = products.FirstOrDefault(p => p.Id == i.ProductId)?.NameEn ?? i.ProductId.ToString();
-                        return new OrderNotificationItem(pName, i.Quantity, i.PriceAtOrder);
-                    }).ToList(),
-                    CreatedAt: order.CreatedAt
-                );
-                await _notifications.NotifyNewOrderAsync(notifData);
+                item.Product = products.FirstOrDefault(p => p.Id == item.ProductId);
             }
-            catch { /* swallow — notification must never break order flow */ }
-        }, CancellationToken.None);
+            order.Country = country;
+            
+            var invoiceObj = new Invoice
+            {
+                OrderId = order.Id,
+                Order = order,
+                InvoiceNumber = $"INV-{order.OrderNumber}",
+                TotalAmount = order.TotalAmount,
+                IssuedAt = DateTime.UtcNow
+            };
+            var pdfBytes = await _pdfGenerator.GenerateAsync(invoiceObj, cancellationToken);
+
+            var notifData = new OrderNotificationData(
+                OrderNumber:   order.OrderNumber,
+                CustomerName:  request.Phone, // phone as name for anonymous orders
+                CustomerPhone: request.Phone,
+                Address:       request.Address,
+                Country:       country?.Name ?? "—",
+                PaymentMethod: order.PaymentMethod.ToString(),
+                TotalAmount:   order.TotalAmount,
+                Items: order.OrderItems.Select(i => new OrderNotificationItem(i.Product?.NameEn ?? i.ProductId.ToString(), i.Quantity, i.PriceAtOrder)).ToList(),
+                CreatedAt: order.CreatedAt,
+                PdfAttachment: pdfBytes
+            );
+            await _notifications.NotifyNewOrderAsync(notifData, cancellationToken);
+        }
+        catch { /* swallow — notification must never break order flow */ }
 
         return CreatedAtAction(nameof(GetById), new { id = order.Id },
             new { order.Id, order.OrderNumber, order.TotalAmount, CountryId = resolvedCountryId });
@@ -477,33 +490,43 @@ public class OrdersController : ControllerBase
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         // ── Fire invoice notifications (email + WhatsApp) ─────────────────────
-        _ = Task.Run(async () =>
+        try
         {
-            try
-            {
-                var productIds = order.OrderItems.Select(i => i.ProductId).ToList();
-                var products = await _unitOfWork.Products.Query()
-                    .Where(p => productIds.Contains(p.Id)).ToListAsync();
+            var productIds = order.OrderItems.Select(i => i.ProductId).ToList();
+            var products = await _unitOfWork.Products.Query()
+                .Where(p => productIds.Contains(p.Id)).ToListAsync(cancellationToken);
 
-                var notifData = new OrderNotificationData(
-                    OrderNumber:   order.OrderNumber,
-                    CustomerName:  request.Name,
-                    CustomerPhone: request.Phone,
-                    Address:       request.Address,
-                    Country:       country.Name,
-                    PaymentMethod: order.PaymentMethod.ToString(),
-                    TotalAmount:   order.TotalAmount,
-                    Items: order.OrderItems.Select(i =>
-                    {
-                        var pName = products.FirstOrDefault(p => p.Id == i.ProductId)?.NameEn ?? i.ProductId.ToString();
-                        return new OrderNotificationItem(pName, i.Quantity, i.PriceAtOrder);
-                    }).ToList(),
-                    CreatedAt: order.CreatedAt
-                );
-                await _notifications.NotifyNewOrderAsync(notifData);
+            foreach (var item in order.OrderItems)
+            {
+                item.Product = products.FirstOrDefault(p => p.Id == item.ProductId);
             }
-            catch { /* swallow */ }
-        }, CancellationToken.None);
+            order.Country = country;
+            
+            var invoiceObj = new Invoice
+            {
+                OrderId = order.Id,
+                Order = order,
+                InvoiceNumber = $"INV-{order.OrderNumber}",
+                TotalAmount = order.TotalAmount,
+                IssuedAt = DateTime.UtcNow
+            };
+            var pdfBytes = await _pdfGenerator.GenerateAsync(invoiceObj, cancellationToken);
+
+            var notifData = new OrderNotificationData(
+                OrderNumber:   order.OrderNumber,
+                CustomerName:  request.Name,
+                CustomerPhone: request.Phone,
+                Address:       request.Address,
+                Country:       country.Name,
+                PaymentMethod: order.PaymentMethod.ToString(),
+                TotalAmount:   order.TotalAmount,
+                Items: order.OrderItems.Select(i => new OrderNotificationItem(i.Product?.NameEn ?? i.ProductId.ToString(), i.Quantity, i.PriceAtOrder)).ToList(),
+                CreatedAt: order.CreatedAt,
+                PdfAttachment: pdfBytes
+            );
+            await _notifications.NotifyNewOrderAsync(notifData, cancellationToken);
+        }
+        catch { /* swallow */ }
 
         return CreatedAtAction(nameof(GetById), new { id = order.Id },
             new { order.Id, order.OrderNumber, order.TotalAmount, Country = country.Name });

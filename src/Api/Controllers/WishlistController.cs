@@ -9,7 +9,6 @@ namespace Api.Controllers;
 
 [ApiController]
 [Route("api/wishlist")]
-[Authorize] // all wishlist endpoints require login
 public class WishlistController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -19,15 +18,21 @@ public class WishlistController : ControllerBase
         _db = db;
     }
 
-    // ─── GET /api/wishlist — current user's wishlist ──────────────────────────
+    // ─── GET /api/wishlist — current user's or guest's wishlist ────────────────
     [HttpGet]
-    public async Task<IActionResult> GetMyWishlist(CancellationToken cancellationToken)
+    public async Task<IActionResult> GetMyWishlist([FromHeader(Name = "X-Guest-Id")] string? guestId, CancellationToken cancellationToken)
     {
         var userId = GetUserId();
-        if (userId == Guid.Empty) return Unauthorized();
+        if (userId == Guid.Empty && string.IsNullOrWhiteSpace(guestId))
+            return Unauthorized(new { message = "You must be logged in or provide a guest ID." });
 
-        var items = await _db.WishlistItems
-            .Where(w => w.UserId == userId)
+        var query = _db.WishlistItems.AsQueryable();
+        if (userId != Guid.Empty)
+            query = query.Where(w => w.UserId == userId);
+        else
+            query = query.Where(w => w.GuestId == guestId);
+
+        var items = await query
             .Include(w => w.Product)
             .OrderByDescending(w => w.AddedAt)
             .Select(w => new
@@ -52,10 +57,11 @@ public class WishlistController : ControllerBase
 
     // ─── POST /api/wishlist/{productId} — add to wishlist ────────────────────
     [HttpPost("{productId}")]
-    public async Task<IActionResult> AddToWishlist(Guid productId, CancellationToken cancellationToken)
+    public async Task<IActionResult> AddToWishlist(Guid productId, [FromHeader(Name = "X-Guest-Id")] string? guestId, CancellationToken cancellationToken)
     {
         var userId = GetUserId();
-        if (userId == Guid.Empty) return Unauthorized();
+        if (userId == Guid.Empty && string.IsNullOrWhiteSpace(guestId))
+            return Unauthorized(new { message = "You must be logged in or provide a guest ID." });
 
         // Check product exists
         var productExists = await _db.Products.AnyAsync(p => p.Id == productId, cancellationToken);
@@ -63,14 +69,16 @@ public class WishlistController : ControllerBase
 
         // Ignore duplicate (idempotent)
         var existing = await _db.WishlistItems
-            .FirstOrDefaultAsync(w => w.UserId == userId && w.ProductId == productId, cancellationToken);
+            .FirstOrDefaultAsync(w => w.ProductId == productId && (userId != Guid.Empty ? w.UserId == userId : w.GuestId == guestId), cancellationToken);
+            
         if (existing != null)
             return Ok(new { message = "Already in wishlist.", wishlistItemId = existing.Id });
 
         var item = new WishlistItem
         {
             Id = Guid.NewGuid(),
-            UserId = userId,
+            UserId = userId != Guid.Empty ? userId : null,
+            GuestId = userId == Guid.Empty ? guestId : null,
             ProductId = productId,
             AddedAt = DateTime.UtcNow
         };
@@ -83,13 +91,14 @@ public class WishlistController : ControllerBase
 
     // ─── DELETE /api/wishlist/{productId} — remove from wishlist ─────────────
     [HttpDelete("{productId}")]
-    public async Task<IActionResult> RemoveFromWishlist(Guid productId, CancellationToken cancellationToken)
+    public async Task<IActionResult> RemoveFromWishlist(Guid productId, [FromHeader(Name = "X-Guest-Id")] string? guestId, CancellationToken cancellationToken)
     {
         var userId = GetUserId();
-        if (userId == Guid.Empty) return Unauthorized();
+        if (userId == Guid.Empty && string.IsNullOrWhiteSpace(guestId))
+            return Unauthorized(new { message = "You must be logged in or provide a guest ID." });
 
         var item = await _db.WishlistItems
-            .FirstOrDefaultAsync(w => w.UserId == userId && w.ProductId == productId, cancellationToken);
+            .FirstOrDefaultAsync(w => w.ProductId == productId && (userId != Guid.Empty ? w.UserId == userId : w.GuestId == guestId), cancellationToken);
 
         if (item == null) return NotFound(new { message = "Item not in wishlist." });
 
@@ -101,13 +110,14 @@ public class WishlistController : ControllerBase
 
     // ─── GET /api/wishlist/check/{productId} — is it in wishlist? ────────────
     [HttpGet("check/{productId}")]
-    public async Task<IActionResult> CheckWishlist(Guid productId, CancellationToken cancellationToken)
+    public async Task<IActionResult> CheckWishlist(Guid productId, [FromHeader(Name = "X-Guest-Id")] string? guestId, CancellationToken cancellationToken)
     {
         var userId = GetUserId();
-        if (userId == Guid.Empty) return Ok(new { inWishlist = false });
+        if (userId == Guid.Empty && string.IsNullOrWhiteSpace(guestId)) 
+            return Ok(new { inWishlist = false });
 
         var inWishlist = await _db.WishlistItems
-            .AnyAsync(w => w.UserId == userId && w.ProductId == productId, cancellationToken);
+            .AnyAsync(w => w.ProductId == productId && (userId != Guid.Empty ? w.UserId == userId : w.GuestId == guestId), cancellationToken);
 
         return Ok(new { inWishlist });
     }

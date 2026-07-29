@@ -310,7 +310,7 @@ public class ProductsController : ControllerBase
                 r.Rating,
                 r.Comment,
                 r.CreatedAt,
-                ReviewerName = r.User != null ? r.User.Name : "Customer"
+                ReviewerName = r.User != null ? r.User.Name : (r.GuestName ?? "Customer")
             })
             .ToListAsync(cancellationToken);
 

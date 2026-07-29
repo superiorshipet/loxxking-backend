@@ -392,20 +392,15 @@ function toggleWishlistSection() {
 
 
 async function loadWishlistIds() {
-    if (!currentToken) return;
     try {
         const items = await fetch(`${currentApiBase}/wishlist`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
+            headers: { 'Authorization': `Bearer ${currentToken}`, 'X-Guest-Id': getGuestId() }
         }).then(r => r.ok ? r.json() : []);
         wishlistProductIds = new Set(items.map(i => i.productId));
     } catch (_) {}
 }
 
 async function toggleWishlist(productId) {
-    if (!currentToken) {
-        showToast('info', '💡 Please log in to save favourites');
-        return;
-    }
     const btn = document.getElementById(`wish-btn-${productId}`);
     const isIn = wishlistProductIds.has(productId);
 
@@ -416,7 +411,7 @@ async function toggleWishlist(productId) {
         const method = isIn ? 'DELETE' : 'POST';
         const resp = await fetch(`${currentApiBase}/wishlist/${productId}`, {
             method,
-            headers: { 'Authorization': `Bearer ${currentToken}` }
+            headers: { 'Authorization': `Bearer ${currentToken}`, 'X-Guest-Id': getGuestId() }
         });
         if (resp.ok) {
             if (isIn) {
@@ -441,21 +436,13 @@ async function loadMyWishlist() {
     const countEl = document.getElementById('wishlist-count');
     if (!container) return;
 
-    if (!currentToken) {
-        container.innerHTML = `
-        <div style="text-align:center;padding:40px;color:var(--text-muted);">
-            <div style="font-size:48px;margin-bottom:12px;">🔒</div>
-            <div style="font-weight:600;margin-bottom:8px;">Login required</div>
-            <div>Please log in to view your saved items.</div>
-        </div>`;
-        return;
-    }
+    
 
     container.innerHTML = '<div class="loading-state">⏳ Loading your wishlist...</div>';
 
     try {
         const items = await fetch(`${currentApiBase}/wishlist`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
+            headers: { 'Authorization': `Bearer ${currentToken}`, 'X-Guest-Id': getGuestId() }
         }).then(r => r.json());
 
         if (countEl) countEl.textContent = items.length;
@@ -594,6 +581,14 @@ async function applySortFilter() {
 
 // ─── Product Detail Modal ─────────────────────────────────────────────────────
 let _currentDetailProductId = null;
+function getGuestId() {
+    let gid = localStorage.getItem('guestId');
+    if (!gid) {
+        gid = 'guest_' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('guestId', gid);
+    }
+    return gid;
+}
 let _currentDetailRating = 0;
 
 async function openProductDetail(productId) {
@@ -681,15 +676,7 @@ async function openProductDetail(productId) {
         // Show/hide review form
         const reviewForm = document.getElementById('pd-review-form');
         const loginMsg = document.getElementById('pd-review-login-msg');
-        if (reviewForm) {
-            if (currentToken) {
-                reviewForm.style.display = 'block';
-                if (loginMsg) loginMsg.style.display = 'none';
-            } else {
-                reviewForm.style.display = 'none';
-                if (loginMsg) { loginMsg.style.display = 'block'; loginMsg.parentElement.style.display = 'block'; }
-            }
-        }
+        if (reviewForm) { reviewForm.style.display = 'block'; if (loginMsg) loginMsg.style.display = 'none'; }
 
         // Shipping & Returns tab
         const shippingEl = document.getElementById('pd-shipping-policy');
@@ -731,16 +718,23 @@ function setPdRating(val) {
 }
 
 async function submitProductReview() {
-    if (!currentToken) { showToast('error', 'يجب تسجيل الدخول أولاً'); return; }
     if (_pdRatingSelected < 1) { showToast('error', 'اختر عدد النجوم أولاً'); return; }
     const comment = document.getElementById('pd-review-comment')?.value?.trim() || '';
     if (!comment) { showToast('error', 'اكتب تعليقاً'); return; }
 
     try {
-        await fetch(`${currentApiBase}/products/${_currentDetailProductId}/reviews`, {
+        const guestName = currentToken ? null : prompt('ما هو اسمك؟ (لإضافة التقييم كزائر)');
+        if (!currentToken && !guestName) return;
+
+        await fetch(`${currentApiBase}/reviews`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` },
-            body: JSON.stringify({ rating: _pdRatingSelected, comment })
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}`, 'X-Guest-Id': getGuestId() },
+            body: JSON.stringify({ 
+                productId: _currentDetailProductId,
+                rating: _pdRatingSelected, 
+                comment: comment,
+                guestName: guestName
+            })
         });
         showToast('success', '✅ تم إرسال تقييمك!');
         document.getElementById('pd-review-comment').value = '';
